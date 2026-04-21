@@ -1,0 +1,8 @@
+[package]
+name = "aximo-core"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+

@@ -1,0 +1,14 @@
+[server]
+host = "0.0.0.0"
+port = 8080
+
+[inference]
+models_dir = "/var/lib/aximo/models"
+default_offline_engine = "parakeet"
+default_realtime_engine = "parakeet"
+
+[limits]
+max_short_audio_seconds = 60
+max_realtime_sessions = 24
+max_realtime_buffer_ms = 30000
+

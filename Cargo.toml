@@ -1,0 +1,20 @@
+[workspace]
+members = [
+    "crates/aximo",
+    "crates/aximo-audio",
+    "crates/aximo-core",
+    "crates/aximo-inference",
+]
+resolver = "2"
+
+[workspace.package]
+edition = "2021"
+license = "MIT"
+version = "0.1.0"
+
+[workspace.dependencies]
+anyhow = "1.0.95"
+serde = { version = "1.0.217", features = ["derive"] }
+thiserror = "2.0.11"
+tokio = { version = "1.43.0", features = ["macros", "rt-multi-thread"] }
+
