@@ -6,6 +6,8 @@ use std::{
     },
 };
 
+use tokio::sync::OwnedSemaphorePermit;
+
 #[derive(Clone, Default)]
 pub struct SessionManager {
     next_id: Arc<AtomicU64>,
@@ -17,7 +19,7 @@ impl SessionManager {
         Self::default()
     }
 
-    pub fn start_session(&self) -> String {
+    pub fn start_session(&self, capacity_permit: OwnedSemaphorePermit) -> String {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed) + 1;
         let session_id = format!("session-{id}");
 
@@ -26,6 +28,7 @@ impl SessionManager {
             RealtimeSession {
                 id: session_id.clone(),
                 audio_bytes: Vec::new(),
+                capacity_permit,
             },
         );
 
@@ -64,4 +67,6 @@ struct RealtimeSession {
     #[allow(dead_code)]
     id: String,
     audio_bytes: Vec<u8>,
+    #[allow(dead_code)]
+    capacity_permit: OwnedSemaphorePermit,
 }

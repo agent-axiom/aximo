@@ -31,12 +31,18 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
                 };
 
                 match client_event.event.as_str() {
-                    "start" => {
-                        let session_id = state.session_manager.start_session();
-                        active_session_id = Some(session_id.clone());
-                        let _ =
-                            send_event(&mut socket, ServerEvent::session_started(session_id)).await;
-                    }
+                    "start" => match state.scheduler.try_acquire_realtime() {
+                        Ok(permit) => {
+                            let session_id = state.session_manager.start_session(permit);
+                            active_session_id = Some(session_id.clone());
+                            let _ =
+                                send_event(&mut socket, ServerEvent::session_started(session_id))
+                                    .await;
+                        }
+                        Err(_) => {
+                            let _ = send_event(&mut socket, ServerEvent::error()).await;
+                        }
+                    },
                     "stop" => {
                         if let Some(session_id) = active_session_id.take() {
                             let audio_bytes = state

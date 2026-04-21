@@ -13,6 +13,11 @@ pub async fn transcribe_short(
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Json<ShortAudioResult>, StatusCode> {
+    let _permit = state
+        .scheduler
+        .try_acquire_short_audio()
+        .map_err(|_| StatusCode::TOO_MANY_REQUESTS)?;
+
     let content_type = headers
         .get(axum::http::header::CONTENT_TYPE)
         .and_then(|value| value.to_str().ok())

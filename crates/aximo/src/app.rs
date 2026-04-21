@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use aximo_core::SessionManager;
+use aximo_core::{Scheduler, SessionManager};
 use aximo_inference::engine::{FakeEngine, SpeechEngine};
 use axum::Router;
 
@@ -10,12 +10,17 @@ use crate::{config::Settings, http, ws};
 pub struct AppState {
     pub speech_engine: Arc<dyn SpeechEngine>,
     pub session_manager: SessionManager,
+    pub scheduler: Scheduler,
 }
 
-pub fn build_app(_settings: Settings, speech_engine: Arc<dyn SpeechEngine>) -> Router {
+pub fn build_app(settings: Settings, speech_engine: Arc<dyn SpeechEngine>) -> Router {
     let state = AppState {
         speech_engine,
         session_manager: SessionManager::new(),
+        scheduler: Scheduler::new(
+            settings.limits.max_short_audio_requests,
+            settings.limits.max_realtime_sessions,
+        ),
     };
 
     Router::new()

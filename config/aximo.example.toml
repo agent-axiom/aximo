@@ -8,7 +8,5 @@ default_offline_engine = "parakeet"
 default_realtime_engine = "parakeet"
 
 [limits]
-max_short_audio_seconds = 60
+max_short_audio_requests = 8
 max_realtime_sessions = 24
-max_realtime_buffer_ms = 30000
-
