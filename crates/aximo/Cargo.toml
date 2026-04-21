@@ -8,9 +8,11 @@ version.workspace = true
 aximo-core = { path = "../aximo-core" }
 aximo-inference = { path = "../aximo-inference" }
 axum.workspace = true
+futures-util.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
+tokio-tungstenite.workspace = true
 tower.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
