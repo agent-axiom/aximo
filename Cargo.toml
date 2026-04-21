@@ -16,6 +16,7 @@ version = "0.1.0"
 anyhow = "1.0.95"
 axum = "0.7.9"
 serde = { version = "1.0.217", features = ["derive"] }
+serde_json = "1.0.149"
 thiserror = "2.0.11"
 tokio = { version = "1.43.0", features = ["macros", "rt-multi-thread"] }
 tower = { version = "0.5.2", features = ["util"] }

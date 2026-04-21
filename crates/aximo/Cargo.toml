@@ -5,8 +5,11 @@ license.workspace = true
 version.workspace = true
 
 [dependencies]
+aximo-core = { path = "../aximo-core" }
+aximo-inference = { path = "../aximo-inference" }
 axum.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 tokio.workspace = true
 tower.workspace = true
 tracing.workspace = true
