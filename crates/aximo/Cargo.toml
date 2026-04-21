@@ -5,4 +5,9 @@ license.workspace = true
 version.workspace = true
 
 [dependencies]
-
+axum.workspace = true
+serde.workspace = true
+tokio.workspace = true
+tower.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
