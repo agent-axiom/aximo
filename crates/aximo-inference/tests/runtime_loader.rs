@@ -4,7 +4,7 @@ use aximo_inference::runtime::{EngineKind, EngineSpec, RuntimeEngineFactory};
 
 #[test]
 fn runtime_loader_rejects_missing_model_directory() {
-    let factory = RuntimeEngineFactory::default();
+    let factory = RuntimeEngineFactory;
     let spec = EngineSpec {
         kind: EngineKind::Parakeet,
         model_path: PathBuf::from("/definitely/missing/model"),

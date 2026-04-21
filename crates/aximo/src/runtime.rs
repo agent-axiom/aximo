@@ -39,7 +39,7 @@ pub fn load_engine(
 ) -> anyhow::Result<Arc<dyn SpeechEngine>> {
     let spec = resolve_engine_spec(settings, engine_name)?;
 
-    RuntimeEngineFactory::default()
+    RuntimeEngineFactory
         .build(&spec)
         .map_err(anyhow::Error::new)
 }

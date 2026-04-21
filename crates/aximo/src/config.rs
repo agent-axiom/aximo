@@ -2,21 +2,11 @@ use std::{collections::BTreeMap, env, fs, path::Path};
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Settings {
     pub server: ServerSettings,
     pub limits: LimitSettings,
     pub inference: InferenceSettings,
-}
-
-impl Default for Settings {
-    fn default() -> Self {
-        Self {
-            server: ServerSettings::default(),
-            limits: LimitSettings::default(),
-            inference: InferenceSettings::default(),
-        }
-    }
 }
 
 impl Settings {
