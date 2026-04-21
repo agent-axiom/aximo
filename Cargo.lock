@@ -54,6 +54,7 @@ name = "aximo-core"
 version = "0.1.0"
 dependencies = [
  "serde",
+ "tokio",
 ]
 
 [[package]]
