@@ -51,3 +51,33 @@ async fn websocket_session_emits_started_and_final_events() {
 
     server.abort();
 }
+
+#[tokio::test]
+async fn websocket_session_emits_partial_after_audio_chunk() {
+    let (url, server) = spawn_test_server().await;
+    let (mut socket, _) = connect_async(url).await.unwrap();
+
+    socket
+        .send(Message::Text(r#"{"event":"start"}"#.into()))
+        .await
+        .unwrap();
+    socket
+        .send(Message::Binary(vec![0_u8; 3200]))
+        .await
+        .unwrap();
+    socket
+        .send(Message::Text(r#"{"event":"stop"}"#.into()))
+        .await
+        .unwrap();
+
+    let started = next_event(&mut socket).await;
+    let partial = next_event(&mut socket).await;
+    let final_event = next_event(&mut socket).await;
+
+    assert_eq!(started["event"], "session_started");
+    assert_eq!(partial["event"], "partial");
+    assert_eq!(partial["text"], "hello world");
+    assert_eq!(final_event["event"], "final");
+
+    server.abort();
+}

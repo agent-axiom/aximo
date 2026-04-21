@@ -45,6 +45,15 @@ impl SessionManager {
         Ok(())
     }
 
+    pub fn audio_snapshot(&self, session_id: &str) -> Result<Vec<u8>, SessionError> {
+        let sessions = self.sessions.lock().expect("session manager lock");
+        let session = sessions
+            .get(session_id)
+            .ok_or(SessionError::MissingSession)?;
+
+        Ok(session.audio_bytes.clone())
+    }
+
     pub fn finish_session(&self, session_id: &str) -> Result<Vec<u8>, SessionError> {
         let session = self
             .sessions

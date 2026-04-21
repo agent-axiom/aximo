@@ -80,7 +80,34 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
             }
             Message::Binary(chunk) => {
                 if let Some(session_id) = active_session_id.as_deref() {
-                    let _ = state.session_manager.append_audio(session_id, &chunk);
+                    if state
+                        .session_manager
+                        .append_audio(session_id, &chunk)
+                        .is_ok()
+                    {
+                        let audio_bytes = state
+                            .session_manager
+                            .audio_snapshot(session_id)
+                            .unwrap_or_default();
+                        let request = ShortAudioRequest {
+                            audio_bytes,
+                            content_type: "audio/pcm".to_string(),
+                            engine: None,
+                            language_hint: None,
+                            timestamps: false,
+                        };
+
+                        match state.realtime_engine.transcribe_short(request) {
+                            Ok(result) => {
+                                let _ =
+                                    send_event(&mut socket, ServerEvent::partial_text(result.text))
+                                        .await;
+                            }
+                            Err(_) => {
+                                let _ = send_event(&mut socket, ServerEvent::error()).await;
+                            }
+                        }
+                    }
                 } else {
                     let _ = send_event(&mut socket, ServerEvent::error()).await;
                 }

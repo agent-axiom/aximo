@@ -31,6 +31,14 @@ impl ServerEvent {
         }
     }
 
+    pub fn partial_text(text: impl Into<String>) -> Self {
+        Self {
+            event: "partial".to_string(),
+            session_id: None,
+            text: Some(text.into()),
+        }
+    }
+
     pub fn error() -> Self {
         Self {
             event: "error".to_string(),
