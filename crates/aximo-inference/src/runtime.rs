@@ -73,35 +73,61 @@ impl RuntimeEngineFactory {
 
         Ok(Arc::new(TranscribeRsEngine {
             engine_name: spec.kind.as_str().to_string(),
-            model: Mutex::new(model),
+            model: Mutex::new(TranscribeRsModelRunner { model }),
         }))
     }
 }
 
-struct TranscribeRsEngine {
-    engine_name: String,
-    model: Mutex<Box<dyn TranscribeSpeechModel + Send>>,
+trait ModelRunner: Send {
+    fn transcribe_file(
+        &mut self,
+        path: &Path,
+        language: Option<String>,
+    ) -> Result<String, InferenceError>;
 }
 
-impl SpeechEngine for TranscribeRsEngine {
+struct TranscribeRsModelRunner {
+    model: Box<dyn TranscribeSpeechModel + Send>,
+}
+
+impl ModelRunner for TranscribeRsModelRunner {
+    fn transcribe_file(
+        &mut self,
+        path: &Path,
+        language: Option<String>,
+    ) -> Result<String, InferenceError> {
+        let options = TranscribeOptions {
+            language,
+            ..Default::default()
+        };
+        let path = path.to_path_buf();
+        let result = self
+            .model
+            .transcribe_file(&path, &options)
+            .map_err(|error| InferenceError::Runtime(error.to_string()))?;
+
+        Ok(result.text)
+    }
+}
+
+struct TranscribeRsEngine<R = TranscribeRsModelRunner> {
+    engine_name: String,
+    model: Mutex<R>,
+}
+
+impl<R: ModelRunner> SpeechEngine for TranscribeRsEngine<R> {
     fn transcribe_short(
         &self,
         request: ShortAudioRequest,
     ) -> Result<ShortAudioResult, InferenceError> {
         let wav_file = materialize_as_wav(&request)?;
-        let wav_path = wav_file.path().to_path_buf();
-        let options = TranscribeOptions {
-            language: request.language_hint.clone(),
-            ..Default::default()
-        };
+        let wav_path = wav_file.path();
 
         let mut model = self.model.lock().expect("transcribe-rs model lock");
-        let result = model
-            .transcribe_file(&wav_path, &options)
-            .map_err(|error| InferenceError::Runtime(error.to_string()))?;
+        let text = model.transcribe_file(wav_path, request.language_hint.clone())?;
 
         Ok(ShortAudioResult {
-            text: result.text,
+            text,
             segments: Vec::new(),
             detected_language: request.language_hint.unwrap_or_else(|| "auto".to_string()),
             engine: self.engine_name.clone(),
@@ -157,4 +183,111 @@ fn write_pcm_as_wav(path: &Path, bytes: &[u8]) -> Result<(), InferenceError> {
 
 fn io_error(error: impl ToString) -> InferenceError {
     InferenceError::Runtime(error.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct FakeRunner {
+        text: String,
+        seen_header: Option<[u8; 4]>,
+    }
+
+    impl FakeRunner {
+        fn new(text: &str) -> Self {
+            Self {
+                text: text.to_string(),
+                seen_header: None,
+            }
+        }
+    }
+
+    impl ModelRunner for FakeRunner {
+        fn transcribe_file(
+            &mut self,
+            path: &Path,
+            _language: Option<String>,
+        ) -> Result<String, InferenceError> {
+            let bytes = std::fs::read(path).map_err(io_error)?;
+            self.seen_header = Some(bytes[0..4].try_into().expect("wav header"));
+            Ok(self.text.clone())
+        }
+    }
+
+    #[test]
+    fn engine_kind_parses_and_formats_known_values() {
+        assert_eq!(
+            EngineKind::from_str("parakeet").unwrap(),
+            EngineKind::Parakeet
+        );
+        assert_eq!(EngineKind::from_str("gigaam").unwrap(), EngineKind::Gigaam);
+        assert_eq!(EngineKind::Parakeet.as_str(), "parakeet");
+        assert!(EngineKind::from_str("unknown").is_err());
+    }
+
+    #[test]
+    fn materialize_as_wav_rejects_unsupported_content_type() {
+        let request = ShortAudioRequest {
+            audio_bytes: vec![1, 2, 3, 4],
+            content_type: "audio/mp3".to_string(),
+            engine: None,
+            language_hint: None,
+            timestamps: false,
+        };
+
+        let error = materialize_as_wav(&request).unwrap_err();
+        assert!(error.to_string().contains("unsupported content type"));
+    }
+
+    #[test]
+    fn materialize_as_wav_rejects_odd_length_pcm() {
+        let request = ShortAudioRequest {
+            audio_bytes: vec![1, 2, 3],
+            content_type: "audio/pcm".to_string(),
+            engine: None,
+            language_hint: None,
+            timestamps: false,
+        };
+
+        let error = materialize_as_wav(&request).unwrap_err();
+        assert!(error.to_string().contains("aligned to 16-bit"));
+    }
+
+    #[test]
+    fn materialize_as_wav_passes_through_existing_wav_payload() {
+        let request = ShortAudioRequest {
+            audio_bytes: b"RIFFdemo".to_vec(),
+            content_type: "audio/wav".to_string(),
+            engine: None,
+            language_hint: None,
+            timestamps: false,
+        };
+
+        let file = materialize_as_wav(&request).unwrap();
+        let bytes = std::fs::read(file.path()).unwrap();
+
+        assert_eq!(bytes, b"RIFFdemo");
+    }
+
+    #[test]
+    fn transcribe_short_converts_pcm_payload_to_wav_before_running_model() {
+        let engine = TranscribeRsEngine {
+            engine_name: "fake".to_string(),
+            model: Mutex::new(FakeRunner::new("decoded text")),
+        };
+        let request = ShortAudioRequest {
+            audio_bytes: vec![0, 0, 1, 0, 2, 0, 3, 0],
+            content_type: "audio/pcm".to_string(),
+            engine: None,
+            language_hint: Some("ru".to_string()),
+            timestamps: false,
+        };
+
+        let result = engine.transcribe_short(request).unwrap();
+
+        assert_eq!(result.text, "decoded text");
+        assert_eq!(result.detected_language, "ru");
+        assert_eq!(engine.model.lock().unwrap().seen_header, Some(*b"RIFF"));
+    }
 }

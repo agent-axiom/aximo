@@ -18,3 +18,7 @@ toml.workspace = true
 tower.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

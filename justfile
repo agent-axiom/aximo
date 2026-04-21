@@ -10,3 +10,5 @@ fmt:
 lint:
     cargo clippy --workspace --all-targets --all-features -- -D warnings
 
+coverage:
+    cargo llvm-cov --workspace --summary-only

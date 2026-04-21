@@ -51,3 +51,35 @@ impl SpeechEngine for UnavailableEngine {
         Err(InferenceError::Unavailable(self.reason.clone()))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_request() -> ShortAudioRequest {
+        ShortAudioRequest {
+            audio_bytes: vec![0, 1, 2, 3],
+            content_type: "audio/wav".to_string(),
+            engine: None,
+            language_hint: None,
+            timestamps: false,
+        }
+    }
+
+    #[test]
+    fn fake_engine_returns_static_result() {
+        let result = FakeEngine.transcribe_short(sample_request()).unwrap();
+
+        assert_eq!(result.text, "hello world");
+        assert_eq!(result.engine, "fake");
+    }
+
+    #[test]
+    fn unavailable_engine_returns_unavailable_error() {
+        let error = UnavailableEngine::new("missing model")
+            .transcribe_short(sample_request())
+            .unwrap_err();
+
+        assert!(matches!(error, InferenceError::Unavailable(_)));
+    }
+}

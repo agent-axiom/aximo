@@ -105,3 +105,66 @@ pub struct ConfiguredEngine {
     pub kind: String,
     pub path: String,
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{Mutex, OnceLock};
+
+    use super::*;
+
+    fn env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    #[test]
+    fn load_returns_defaults_when_env_is_missing() {
+        let _guard = env_lock().lock().unwrap();
+        std::env::remove_var("AXIMO_CONFIG");
+
+        let settings = Settings::load().unwrap();
+
+        assert_eq!(settings, Settings::default());
+    }
+
+    #[test]
+    fn load_reads_config_path_from_env() {
+        let _guard = env_lock().lock().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("aximo.toml");
+        std::fs::write(
+            &path,
+            r#"
+[server]
+host = "127.0.0.1"
+port = 8081
+
+[inference]
+models_dir = "/tmp/models"
+default_offline_engine = "parakeet"
+default_realtime_engine = "gigaam"
+
+[inference.engines.parakeet]
+kind = "parakeet"
+path = "parakeet-tdt-0.6b-v3-int8"
+
+[inference.engines.gigaam]
+kind = "gigaam"
+path = "giga-am-v3"
+
+[limits]
+max_short_audio_requests = 2
+max_realtime_sessions = 1
+"#,
+        )
+        .unwrap();
+        std::env::set_var("AXIMO_CONFIG", &path);
+
+        let settings = Settings::load().unwrap();
+
+        assert_eq!(settings.server.port, 8081);
+        assert_eq!(settings.inference.models_dir, "/tmp/models");
+
+        std::env::remove_var("AXIMO_CONFIG");
+    }
+}
