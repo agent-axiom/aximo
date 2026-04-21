@@ -12,6 +12,12 @@ pub trait SpeechEngine: Send + Sync {
 pub enum InferenceError {
     #[error("speech engine unavailable: {0}")]
     Unavailable(String),
+    #[error("unsupported engine: {0}")]
+    UnsupportedEngine(String),
+    #[error("invalid audio payload: {0}")]
+    InvalidAudio(String),
+    #[error("runtime inference error: {0}")]
+    Runtime(String),
 }
 
 pub struct FakeEngine;

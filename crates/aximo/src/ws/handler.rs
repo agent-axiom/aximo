@@ -57,7 +57,7 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
                                 timestamps: false,
                             };
 
-                            match state.speech_engine.transcribe_short(request) {
+                            match state.realtime_engine.transcribe_short(request) {
                                 Ok(result) => {
                                     let _ = send_event(
                                         &mut socket,

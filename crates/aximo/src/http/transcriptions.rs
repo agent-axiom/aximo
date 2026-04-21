@@ -33,7 +33,7 @@ pub async fn transcribe_short(
     };
 
     state
-        .speech_engine
+        .offline_engine
         .transcribe_short(request)
         .map(Json)
         .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)

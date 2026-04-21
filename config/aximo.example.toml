@@ -7,6 +7,14 @@ models_dir = "/var/lib/aximo/models"
 default_offline_engine = "parakeet"
 default_realtime_engine = "parakeet"
 
+[inference.engines.parakeet]
+kind = "parakeet"
+path = "parakeet-tdt-0.6b-v3-int8"
+
+[inference.engines.gigaam]
+kind = "gigaam"
+path = "giga-am-v3"
+
 [limits]
 max_short_audio_requests = 8
 max_realtime_sessions = 24
