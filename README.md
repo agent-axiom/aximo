@@ -148,6 +148,10 @@ The `/docs/` page also includes an `Aximo Recorder` panel that can capture micro
 
 For browser microphone access, use `localhost`, `127.0.0.1`, or HTTPS.
 
+One notable addition: I extended Swagger to support sending recordings directly from the microphone.
+
+![Aximo Swagger recorder](docs/assets/swagger-recorder.png)
+
 ## Troubleshooting
 
 If container logs include `onnxruntime cpuid_info warning: Unknown CPU vendor`, this is typically an ONNX Runtime CPU detection warning on ARM or virtualized environments, not a model-load failure. The container now sets `ORT_LOG=error` to reduce that noise in normal runs.
