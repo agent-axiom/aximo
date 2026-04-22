@@ -19,6 +19,7 @@
 Architecture and protocol details live in:
 
 - [docs/architecture.md](/Users/if/PycharmProjects/agent-axiom/aximo/docs/architecture.md)
+- [docs/client-examples.md](/Users/if/PycharmProjects/agent-axiom/aximo/docs/client-examples.md)
 - [docs/realtime-protocol.md](/Users/if/PycharmProjects/agent-axiom/aximo/docs/realtime-protocol.md)
 - [docs/model-licenses.md](/Users/if/PycharmProjects/agent-axiom/aximo/docs/model-licenses.md)
 
@@ -138,6 +139,7 @@ After the service starts:
 
 - Swagger UI: [http://127.0.0.1:8080/docs/](http://127.0.0.1:8080/docs/)
 - OpenAPI JSON: [http://127.0.0.1:8080/openapi.json](http://127.0.0.1:8080/openapi.json)
+- Client examples: [docs/client-examples.md](/Users/if/PycharmProjects/agent-axiom/aximo/docs/client-examples.md)
 
 The `/docs/` page also includes an `Aximo Recorder` panel that can capture microphone audio in the browser:
 
