@@ -9,6 +9,7 @@ use axum::{
 
 use crate::{
     app::AppState,
+    inference_task::run_blocking_inference,
     ws::protocol::{ClientEvent, ServerEvent},
 };
 
@@ -69,7 +70,9 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
                                 timestamps: false,
                             };
 
-                            match state.realtime_engine.transcribe_short(request) {
+                            match run_blocking_inference(state.realtime_engine.clone(), request)
+                                .await
+                            {
                                 Ok(result) => {
                                     let _ = send_event(
                                         &mut socket,
@@ -109,7 +112,7 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
                             timestamps: false,
                         };
 
-                        match state.realtime_engine.transcribe_short(request) {
+                        match run_blocking_inference(state.realtime_engine.clone(), request).await {
                             Ok(result) => {
                                 let _ =
                                     send_event(&mut socket, ServerEvent::partial_text(result.text))

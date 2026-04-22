@@ -6,7 +6,7 @@ use axum::{
     Json,
 };
 
-use crate::app::AppState;
+use crate::{app::AppState, inference_task::run_blocking_inference};
 
 pub async fn transcribe_short(
     State(state): State<AppState>,
@@ -32,9 +32,8 @@ pub async fn transcribe_short(
         timestamps: false,
     };
 
-    state
-        .offline_engine
-        .transcribe_short(request)
+    run_blocking_inference(state.offline_engine.clone(), request)
+        .await
         .map(Json)
         .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)
 }
