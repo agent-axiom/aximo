@@ -1,9 +1,39 @@
 use futures_util::{SinkExt, StreamExt};
 use serde_json::Value;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tokio::net::TcpListener;
 use tokio::time::{sleep, Duration};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
+
+struct RecordingEngine {
+    requests: Arc<Mutex<Vec<usize>>>,
+}
+
+impl RecordingEngine {
+    fn new() -> (Self, Arc<Mutex<Vec<usize>>>) {
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        (
+            Self {
+                requests: Arc::clone(&requests),
+            },
+            requests,
+        )
+    }
+}
+
+impl aximo_inference::engine::SpeechEngine for RecordingEngine {
+    fn transcribe_short(
+        &self,
+        request: aximo_core::ShortAudioRequest,
+    ) -> Result<aximo_core::ShortAudioResult, aximo_inference::engine::InferenceError> {
+        self.requests
+            .lock()
+            .unwrap()
+            .push(request.audio_bytes.len());
+
+        Ok(aximo_core::ShortAudioResult::new("recorded", "recording"))
+    }
+}
 
 async fn spawn_test_server() -> (String, tokio::task::JoinHandle<()>) {
     let app = aximo::app::build_test_app().await;
@@ -233,6 +263,53 @@ async fn websocket_rejects_duplicate_start_without_leaking_capacity() {
 
     assert_eq!(second_started["event"], "session_started");
     assert_eq!(third_started["event"], "session_started");
+
+    server.abort();
+}
+
+#[tokio::test]
+async fn websocket_partial_transcription_uses_bounded_rolling_window() {
+    let settings = aximo::config::Settings::default();
+    let (engine, request_lengths) = RecordingEngine::new();
+    let app = aximo::app::build_app(
+        settings,
+        Arc::new(aximo_inference::engine::FakeEngine),
+        Arc::new(engine),
+    );
+    let (url, server) = spawn_server_with_app(app).await;
+    let (mut socket, _) = connect_async(url).await.unwrap();
+
+    socket
+        .send(Message::Text(r#"{"event":"start"}"#.into()))
+        .await
+        .unwrap();
+    let started = next_event(&mut socket).await;
+    assert_eq!(started["event"], "session_started");
+
+    let chunk = vec![7_u8; 100_000];
+    for _ in 0..3 {
+        socket
+            .send(Message::Binary(chunk.clone().into()))
+            .await
+            .unwrap();
+
+        let partial = next_event(&mut socket).await;
+        assert_eq!(partial["event"], "partial");
+    }
+
+    socket
+        .send(Message::Text(r#"{"event":"stop"}"#.into()))
+        .await
+        .unwrap();
+    let final_event = next_event(&mut socket).await;
+    assert_eq!(final_event["event"], "final");
+
+    let lengths = request_lengths.lock().unwrap().clone();
+    assert_eq!(lengths.len(), 4);
+    assert_eq!(lengths[0], 100_000);
+    assert_eq!(lengths[1], 160_000);
+    assert_eq!(lengths[2], 160_000);
+    assert_eq!(lengths[3], 300_000);
 
     server.abort();
 }

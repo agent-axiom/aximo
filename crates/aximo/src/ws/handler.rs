@@ -12,6 +12,9 @@ use crate::{
     ws::protocol::{ClientEvent, ServerEvent},
 };
 
+// 5 seconds of pcm_s16le 16 kHz mono audio.
+const REALTIME_PARTIAL_WINDOW_BYTES: usize = 160_000;
+
 pub async fn realtime_socket(
     ws: WebSocketUpgrade,
     State(state): State<AppState>,
@@ -96,7 +99,7 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
                     {
                         let audio_bytes = state
                             .session_manager
-                            .audio_snapshot(session_id)
+                            .recent_audio_snapshot(session_id, REALTIME_PARTIAL_WINDOW_BYTES)
                             .unwrap_or_default();
                         let request = ShortAudioRequest {
                             audio_bytes,

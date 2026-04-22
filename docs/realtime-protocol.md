@@ -15,6 +15,8 @@ The realtime API is exposed at `GET /v1/realtime` via WebSocket.
 - `final`
 - `error`
 
+`partial` is best-effort and currently decoded from a bounded rolling recent window of the session audio. `final` is decoded from the full buffered session audio after `stop`.
+
 ## Example Session
 
 ```json

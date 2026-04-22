@@ -107,6 +107,7 @@ Example response:
 ## Realtime Example
 
 Realtime uses WebSocket and raw `pcm_s16le`, `16 kHz`, mono binary chunks.
+Partial hypotheses are computed from a bounded rolling recent window, while the final transcription on `stop` uses the full buffered session audio.
 
 ```js
 const ws = new WebSocket("ws://127.0.0.1:8080/v1/realtime");

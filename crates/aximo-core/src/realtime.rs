@@ -54,6 +54,23 @@ impl SessionManager {
         Ok(session.audio_bytes.clone())
     }
 
+    pub fn recent_audio_snapshot(
+        &self,
+        session_id: &str,
+        max_bytes: usize,
+    ) -> Result<Vec<u8>, SessionError> {
+        let sessions = self.sessions.lock().expect("session manager lock");
+        let session = sessions
+            .get(session_id)
+            .ok_or(SessionError::MissingSession)?;
+
+        let audio = &session.audio_bytes;
+        let recent_len = audio.len().min(max_bytes.max(1));
+        let start = audio.len().saturating_sub(recent_len);
+
+        Ok(audio[start..].to_vec())
+    }
+
     pub fn finish_session(&self, session_id: &str) -> Result<Vec<u8>, SessionError> {
         let session = self
             .sessions
