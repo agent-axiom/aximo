@@ -44,6 +44,7 @@ binary audio chunk
 - invalid JSON control frame
 - binary frame before `start`
 - `stop` before `start`
+- repeated `start` while a session is already active on the same socket
 - realtime capacity exhausted
 
 All of the above currently return a server event with `{"event":"error"}`.

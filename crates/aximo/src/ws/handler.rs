@@ -31,18 +31,27 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
                 };
 
                 match client_event.event.as_str() {
-                    "start" => match state.scheduler.try_acquire_realtime() {
-                        Ok(permit) => {
-                            let session_id = state.session_manager.start_session(permit);
-                            active_session_id = Some(session_id.clone());
-                            let _ =
-                                send_event(&mut socket, ServerEvent::session_started(session_id))
-                                    .await;
-                        }
-                        Err(_) => {
+                    "start" => {
+                        if active_session_id.is_some() {
                             let _ = send_event(&mut socket, ServerEvent::error()).await;
+                            continue;
                         }
-                    },
+
+                        match state.scheduler.try_acquire_realtime() {
+                            Ok(permit) => {
+                                let session_id = state.session_manager.start_session(permit);
+                                active_session_id = Some(session_id.clone());
+                                let _ = send_event(
+                                    &mut socket,
+                                    ServerEvent::session_started(session_id),
+                                )
+                                .await;
+                            }
+                            Err(_) => {
+                                let _ = send_event(&mut socket, ServerEvent::error()).await;
+                            }
+                        }
+                    }
                     "stop" => {
                         if let Some(session_id) = active_session_id.take() {
                             let audio_bytes = state
@@ -116,9 +125,17 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
             _ => {}
         }
     }
+
+    cleanup_active_session(&state, &mut active_session_id);
 }
 
 async fn send_event(socket: &mut WebSocket, event: ServerEvent) -> Result<(), axum::Error> {
     let message = serde_json::to_string(&event).expect("serialize websocket event");
     socket.send(Message::Text(message.into())).await
+}
+
+fn cleanup_active_session(state: &AppState, active_session_id: &mut Option<String>) {
+    if let Some(session_id) = active_session_id.take() {
+        let _ = state.session_manager.finish_session(&session_id);
+    }
 }

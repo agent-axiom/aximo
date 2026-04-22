@@ -2,6 +2,7 @@ use futures_util::{SinkExt, StreamExt};
 use serde_json::Value;
 use std::sync::Arc;
 use tokio::net::TcpListener;
+use tokio::time::{sleep, Duration};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 
 async fn spawn_test_server() -> (String, tokio::task::JoinHandle<()>) {
@@ -143,6 +144,95 @@ async fn websocket_session_emits_partial_after_audio_chunk() {
     assert_eq!(partial["event"], "partial");
     assert_eq!(partial["text"], "hello world");
     assert_eq!(final_event["event"], "final");
+
+    server.abort();
+}
+
+#[tokio::test]
+async fn websocket_close_releases_realtime_capacity() {
+    let mut settings = aximo::config::Settings::default();
+    settings.limits.max_realtime_sessions = 1;
+    let app = aximo::app::build_app(
+        settings,
+        Arc::new(aximo_inference::engine::FakeEngine),
+        Arc::new(aximo_inference::engine::FakeEngine),
+    );
+    let (url, server) = spawn_server_with_app(app).await;
+    let (mut first_socket, _) = connect_async(url.clone()).await.unwrap();
+
+    first_socket
+        .send(Message::Text(r#"{"event":"start"}"#.into()))
+        .await
+        .unwrap();
+
+    let started = next_event(&mut first_socket).await;
+    assert_eq!(started["event"], "session_started");
+
+    first_socket.close(None).await.unwrap();
+    sleep(Duration::from_millis(50)).await;
+
+    let (mut second_socket, _) = connect_async(url).await.unwrap();
+    second_socket
+        .send(Message::Text(r#"{"event":"start"}"#.into()))
+        .await
+        .unwrap();
+
+    let second_started = next_event(&mut second_socket).await;
+    assert_eq!(second_started["event"], "session_started");
+
+    server.abort();
+}
+
+#[tokio::test]
+async fn websocket_rejects_duplicate_start_without_leaking_capacity() {
+    let mut settings = aximo::config::Settings::default();
+    settings.limits.max_realtime_sessions = 2;
+    let app = aximo::app::build_app(
+        settings,
+        Arc::new(aximo_inference::engine::FakeEngine),
+        Arc::new(aximo_inference::engine::FakeEngine),
+    );
+    let (url, server) = spawn_server_with_app(app).await;
+    let (mut first_socket, _) = connect_async(url.clone()).await.unwrap();
+
+    first_socket
+        .send(Message::Text(r#"{"event":"start"}"#.into()))
+        .await
+        .unwrap();
+    let started = next_event(&mut first_socket).await;
+    assert_eq!(started["event"], "session_started");
+
+    first_socket
+        .send(Message::Text(r#"{"event":"start"}"#.into()))
+        .await
+        .unwrap();
+    let duplicate_start = next_event(&mut first_socket).await;
+    assert_eq!(duplicate_start["event"], "error");
+
+    first_socket
+        .send(Message::Text(r#"{"event":"stop"}"#.into()))
+        .await
+        .unwrap();
+    let final_event = next_event(&mut first_socket).await;
+    assert_eq!(final_event["event"], "final");
+
+    let (mut second_socket, _) = connect_async(url.clone()).await.unwrap();
+    let (mut third_socket, _) = connect_async(url).await.unwrap();
+
+    second_socket
+        .send(Message::Text(r#"{"event":"start"}"#.into()))
+        .await
+        .unwrap();
+    third_socket
+        .send(Message::Text(r#"{"event":"start"}"#.into()))
+        .await
+        .unwrap();
+
+    let second_started = next_event(&mut second_socket).await;
+    let third_started = next_event(&mut third_socket).await;
+
+    assert_eq!(second_started["event"], "session_started");
+    assert_eq!(third_started["event"], "session_started");
 
     server.abort();
 }
