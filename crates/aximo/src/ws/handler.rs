@@ -41,7 +41,7 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
                             continue;
                         }
 
-                        match state.scheduler.try_acquire_realtime() {
+                        match state.scheduler.try_acquire_realtime_session() {
                             Ok(permit) => {
                                 let session_id = state.session_manager.start_session(permit);
                                 active_session_id = Some(session_id.clone());
@@ -68,6 +68,13 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
                                 engine: None,
                                 language_hint: None,
                                 timestamps: false,
+                            };
+
+                            let Ok(_inference_permit) =
+                                state.scheduler.try_acquire_realtime_inference()
+                            else {
+                                let _ = send_event(&mut socket, ServerEvent::error()).await;
+                                continue;
                             };
 
                             match run_blocking_inference(state.realtime_engine.clone(), request)
@@ -110,6 +117,12 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
                             engine: None,
                             language_hint: None,
                             timestamps: false,
+                        };
+
+                        let Ok(_inference_permit) =
+                            state.scheduler.try_acquire_realtime_inference()
+                        else {
+                            continue;
                         };
 
                         match run_blocking_inference(state.realtime_engine.clone(), request).await {

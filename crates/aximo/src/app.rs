@@ -26,6 +26,8 @@ pub fn build_app(
         scheduler: Scheduler::new(
             settings.limits.max_short_audio_requests,
             settings.limits.max_realtime_sessions,
+            settings.limits.max_short_inferences,
+            settings.limits.max_realtime_inferences,
         ),
     };
 

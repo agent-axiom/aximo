@@ -13,9 +13,9 @@ pub async fn transcribe_short(
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Json<ShortAudioResult>, StatusCode> {
-    let _permit = state
+    let _request_permit = state
         .scheduler
-        .try_acquire_short_audio()
+        .try_acquire_short_audio_request()
         .map_err(|_| StatusCode::TOO_MANY_REQUESTS)?;
 
     let content_type = headers
@@ -31,6 +31,11 @@ pub async fn transcribe_short(
         language_hint: None,
         timestamps: false,
     };
+
+    let _inference_permit = state
+        .scheduler
+        .try_acquire_short_inference()
+        .map_err(|_| StatusCode::TOO_MANY_REQUESTS)?;
 
     run_blocking_inference(state.offline_engine.clone(), request)
         .await

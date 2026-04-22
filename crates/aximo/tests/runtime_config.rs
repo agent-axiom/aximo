@@ -33,6 +33,8 @@ path = "giga-am-v3"
 [limits]
 max_short_audio_requests = 4
 max_realtime_sessions = 2
+max_short_inferences = 1
+max_realtime_inferences = 1
 "#,
     )
     .unwrap();
@@ -43,6 +45,8 @@ max_realtime_sessions = 2
     assert_eq!(settings.server.port, 9090);
     assert_eq!(settings.inference.models_dir, "/srv/models");
     assert_eq!(settings.limits.max_realtime_sessions, 2);
+    assert_eq!(settings.limits.max_short_inferences, 1);
+    assert_eq!(settings.limits.max_realtime_inferences, 1);
 }
 
 #[test]
@@ -77,4 +81,41 @@ fn runtime_loader_returns_error_for_missing_model_path() {
     };
 
     assert!(error.to_string().contains("does not exist"));
+}
+
+#[test]
+fn settings_fill_in_default_inference_limits_when_config_omits_them() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("aximo.toml");
+    fs::write(
+        &path,
+        r#"
+[server]
+host = "127.0.0.1"
+port = 9090
+
+[inference]
+models_dir = "/srv/models"
+default_offline_engine = "gigaam"
+default_realtime_engine = "parakeet"
+
+[inference.engines.parakeet]
+kind = "parakeet"
+path = "parakeet-tdt-0.6b-v3-int8"
+
+[inference.engines.gigaam]
+kind = "gigaam"
+path = "giga-am-v3"
+
+[limits]
+max_short_audio_requests = 4
+max_realtime_sessions = 2
+"#,
+    )
+    .unwrap();
+
+    let settings = Settings::from_path(&path).unwrap();
+
+    assert_eq!(settings.limits.max_short_inferences, 1);
+    assert_eq!(settings.limits.max_realtime_inferences, 1);
 }

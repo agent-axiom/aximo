@@ -3,6 +3,7 @@ use std::{collections::BTreeMap, env, fs, path::Path};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
 pub struct Settings {
     pub server: ServerSettings,
     pub limits: LimitSettings,
@@ -26,6 +27,7 @@ impl Settings {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
 pub struct ServerSettings {
     pub host: String,
     pub port: u16,
@@ -41,9 +43,12 @@ impl Default for ServerSettings {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
 pub struct LimitSettings {
     pub max_short_audio_requests: usize,
     pub max_realtime_sessions: usize,
+    pub max_short_inferences: usize,
+    pub max_realtime_inferences: usize,
 }
 
 impl Default for LimitSettings {
@@ -51,11 +56,14 @@ impl Default for LimitSettings {
         Self {
             max_short_audio_requests: 8,
             max_realtime_sessions: 24,
+            max_short_inferences: 1,
+            max_realtime_inferences: 1,
         }
     }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
 pub struct InferenceSettings {
     pub models_dir: String,
     pub default_offline_engine: String,

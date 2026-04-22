@@ -108,6 +108,7 @@ Example response:
 
 Realtime uses WebSocket and raw `pcm_s16le`, `16 kHz`, mono binary chunks.
 Partial hypotheses are computed from a bounded rolling recent window, while the final transcription on `stop` uses the full buffered session audio.
+Admission limits and inference limits are configured separately: `max_short_audio_requests` and `max_realtime_sessions` bound accepted work, while `max_short_inferences` and `max_realtime_inferences` bound actual concurrent model executions per engine instance.
 
 ```js
 const ws = new WebSocket("ws://127.0.0.1:8080/v1/realtime");

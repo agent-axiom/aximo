@@ -15,7 +15,7 @@ The realtime API is exposed at `GET /v1/realtime` via WebSocket.
 - `final`
 - `error`
 
-`partial` is best-effort and currently decoded from a bounded rolling recent window of the session audio. `final` is decoded from the full buffered session audio after `stop`.
+`partial` is best-effort and currently decoded from a bounded rolling recent window of the session audio. If the realtime inference slot is busy, a partial update may be skipped. `final` is decoded from the full buffered session audio after `stop` and returns `error` if the realtime inference slot cannot be acquired.
 
 ## Example Session
 
@@ -48,5 +48,6 @@ binary audio chunk
 - `stop` before `start`
 - repeated `start` while a session is already active on the same socket
 - realtime capacity exhausted
+- final decode cannot acquire a realtime inference slot
 
 All of the above currently return a server event with `{"event":"error"}`.
