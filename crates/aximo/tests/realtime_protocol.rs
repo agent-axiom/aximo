@@ -76,7 +76,7 @@ async fn websocket_session_returns_error_for_binary_before_start() {
     let (mut socket, _) = connect_async(url).await.unwrap();
 
     socket
-        .send(Message::Binary(vec![0_u8; 3200]))
+        .send(Message::Binary(vec![0_u8; 3200].into()))
         .await
         .unwrap();
 
@@ -127,7 +127,7 @@ async fn websocket_session_emits_partial_after_audio_chunk() {
         .await
         .unwrap();
     socket
-        .send(Message::Binary(vec![0_u8; 3200]))
+        .send(Message::Binary(vec![0_u8; 3200].into()))
         .await
         .unwrap();
     socket

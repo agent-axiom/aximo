@@ -19,20 +19,20 @@ version = "0.1.0"
 aximo-audio = { path = "crates/aximo-audio", version = "0.1.0" }
 aximo-core = { path = "crates/aximo-core", version = "0.1.0" }
 aximo-inference = { path = "crates/aximo-inference", version = "0.1.0" }
-anyhow = "1.0.95"
-axum = { version = "0.7.9", features = ["ws"] }
-futures-util = "0.3.31"
+anyhow = "1.0.102"
+axum = { version = "0.8.9", features = ["ws"] }
+futures-util = "0.3.32"
 hound = "3.5.1"
-serde = { version = "1.0.217", features = ["derive"] }
+serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
-tempfile = "3.15.0"
-thiserror = "2.0.11"
-tokio = { version = "1.43.0", features = ["macros", "net", "rt-multi-thread", "sync"] }
-tokio-tungstenite = "0.24.0"
-toml = "0.8.19"
-transcribe-rs = { version = "0.3", features = ["onnx"] }
-tower = { version = "0.5.2", features = ["util"] }
-tracing = "0.1.41"
-tracing-subscriber = { version = "0.3.19", features = ["fmt", "env-filter"] }
+tempfile = "3.27.0"
+thiserror = "2.0.18"
+tokio = { version = "1.52.1", features = ["macros", "net", "rt-multi-thread", "sync"] }
+tokio-tungstenite = "0.29.0"
+toml = "1.0"
+transcribe-rs = { version = "0.3.11", features = ["onnx"] }
+tower = { version = "0.5.3", features = ["util"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["fmt", "env-filter"] }
 utoipa = "5.4.0"
-utoipa-swagger-ui = { version = "8.0.3", features = ["axum", "vendored"] }
+utoipa-swagger-ui = { version = "9.0.2", features = ["axum", "vendored"] }

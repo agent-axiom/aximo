@@ -120,5 +120,5 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
 
 async fn send_event(socket: &mut WebSocket, event: ServerEvent) -> Result<(), axum::Error> {
     let message = serde_json::to_string(&event).expect("serialize websocket event");
-    socket.send(Message::Text(message)).await
+    socket.send(Message::Text(message.into())).await
 }
