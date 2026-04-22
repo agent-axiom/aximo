@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Aximo Swagger UI</title>
+    <link rel="stylesheet" type="text/css" href="./swagger-ui.css" />
+    <link rel="stylesheet" type="text/css" href="./index.css" />
+    <link rel="stylesheet" type="text/css" href="./aximo-recorder.css" />
+    <link rel="icon" type="image/png" href="./favicon-32x32.png" sizes="32x32" />
+    <link rel="icon" type="image/png" href="./favicon-16x16.png" sizes="16x16" />
+  </head>
+  <body>
+    <div class="aximo-shell">
+      <aside class="aximo-recorder" aria-label="Aximo recorder">
+        <div class="aximo-recorder__header">
+          <p class="aximo-recorder__eyebrow">Aximo Docs</p>
+          <h1>Aximo Recorder</h1>
+          <p class="aximo-recorder__lede">
+            Use microphone capture for fast API checks. Short Audio uploads a WAV file. Realtime
+            streams raw pcm_s16le 16 kHz mono chunks over WebSocket.
+          </p>
+        </div>
+
+        <div class="aximo-recorder__controls">
+          <label class="aximo-field">
+            <span>Endpoint</span>
+            <select id="aximo-endpoint">
+              <option value="short">Short Audio</option>
+              <option value="realtime">Realtime</option>
+            </select>
+          </label>
+
+          <div class="aximo-button-row">
+            <button id="aximo-start" type="button">Start Recording</button>
+            <button id="aximo-stop" type="button" disabled>Stop</button>
+            <button id="aximo-clear" type="button">Clear</button>
+          </div>
+        </div>
+
+        <div class="aximo-recorder__panels">
+          <section class="aximo-panel">
+            <h2>Status</h2>
+            <pre id="aximo-status">Idle.</pre>
+          </section>
+
+          <section class="aximo-panel">
+            <h2>Result</h2>
+            <pre id="aximo-result">Waiting for recording.</pre>
+          </section>
+        </div>
+
+        <p class="aximo-recorder__hint">
+          Microphone access requires a secure browser context such as
+          <code>http://127.0.0.1</code>, <code>http://localhost</code>, or HTTPS.
+        </p>
+      </aside>
+
+      <main class="aximo-swagger">
+        <div id="swagger-ui"></div>
+      </main>
+    </div>
+
+    <script src="./swagger-ui-bundle.js" charset="UTF-8"></script>
+    <script src="./swagger-ui-standalone-preset.js" charset="UTF-8"></script>
+    <script src="./swagger-initializer.js" charset="UTF-8"></script>
+    <script src="./aximo-recorder.js" charset="UTF-8"></script>
+  </body>
+</html>

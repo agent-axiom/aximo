@@ -6,6 +6,7 @@ services:
     image: aximo:local
     environment:
       AXIMO_CONFIG: /app/config/aximo.toml
+      ORT_LOG: error
     ports:
       - "8080:8080"
     volumes:

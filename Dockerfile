@@ -21,6 +21,7 @@ COPY --from=builder /app/target/release/aximo /usr/local/bin/aximo
 
 WORKDIR /app
 ENV AXIMO_CONFIG=/app/config/aximo.toml
+ENV ORT_LOG=error
 
 USER aximo
 

@@ -1,9 +1,21 @@
-use axum::Router;
+use std::sync::{Arc, OnceLock};
+
+use axum::{
+    extract::Path,
+    http::{header, StatusCode},
+    response::{Html, IntoResponse, Redirect, Response},
+    routing::get,
+    Json, Router,
+};
 use serde::{Deserialize, Serialize};
 use utoipa::{OpenApi, ToSchema};
-use utoipa_swagger_ui::SwaggerUi;
+use utoipa_swagger_ui::{serve as serve_swagger_ui_asset, Config};
 
 use crate::app::AppState;
+
+const DOCS_INDEX_HTML: &str = include_str!("../static/docs/index.html");
+const RECORDER_SCRIPT: &str = include_str!("../static/docs/aximo-recorder.js");
+const RECORDER_STYLES: &str = include_str!("../static/docs/aximo-recorder.css");
 
 #[derive(OpenApi)]
 #[openapi(
@@ -111,6 +123,63 @@ fn transcribe_short_doc() {}
 #[allow(dead_code)]
 fn realtime_doc() {}
 
+fn swagger_config() -> Arc<Config<'static>> {
+    static CONFIG: OnceLock<Arc<Config<'static>>> = OnceLock::new();
+
+    CONFIG
+        .get_or_init(|| {
+            Arc::new(
+                Config::new(["/openapi.json"])
+                    .display_request_duration(true)
+                    .filter(true)
+                    .try_it_out_enabled(true)
+                    .validator_url("none"),
+            )
+        })
+        .clone()
+}
+
+async fn openapi_json() -> Json<utoipa::openapi::OpenApi> {
+    Json(ApiDoc::openapi())
+}
+
+async fn docs_redirect() -> Redirect {
+    Redirect::to("/docs/")
+}
+
+async fn docs_index() -> Html<&'static str> {
+    Html(DOCS_INDEX_HTML)
+}
+
+async fn docs_assets(Path(path): Path<String>) -> Response {
+    match path.as_str() {
+        "aximo-recorder.js" => (
+            [(
+                header::CONTENT_TYPE,
+                "application/javascript; charset=utf-8",
+            )],
+            RECORDER_SCRIPT,
+        )
+            .into_response(),
+        "aximo-recorder.css" => (
+            [(header::CONTENT_TYPE, "text/css; charset=utf-8")],
+            RECORDER_STYLES,
+        )
+            .into_response(),
+        other => match serve_swagger_ui_asset(other, swagger_config()) {
+            Ok(Some(file)) => {
+                ([(header::CONTENT_TYPE, file.content_type)], file.bytes).into_response()
+            }
+            Ok(None) => StatusCode::NOT_FOUND.into_response(),
+            Err(error) => (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response(),
+        },
+    }
+}
+
 pub fn router() -> Router<AppState> {
-    Router::<AppState>::new().merge(SwaggerUi::new("/docs").url("/openapi.json", ApiDoc::openapi()))
+    Router::<AppState>::new()
+        .route("/openapi.json", get(openapi_json))
+        .route("/docs", get(docs_redirect))
+        .route("/docs/", get(docs_index))
+        .route("/docs/{*rest}", get(docs_assets))
 }

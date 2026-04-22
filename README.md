@@ -7,7 +7,7 @@
 - `POST /v1/transcriptions` for short audio
 - `GET /v1/realtime` for realtime WebSocket streaming
 - `GET /openapi.json` for the OpenAPI schema
-- `GET /docs/` for Swagger UI
+- `GET /docs/` for Swagger UI with a built-in microphone recorder panel
 
 ## Workspace
 
@@ -138,6 +138,17 @@ After the service starts:
 
 - Swagger UI: [http://127.0.0.1:8080/docs/](http://127.0.0.1:8080/docs/)
 - OpenAPI JSON: [http://127.0.0.1:8080/openapi.json](http://127.0.0.1:8080/openapi.json)
+
+The `/docs/` page also includes an `Aximo Recorder` panel that can capture microphone audio in the browser:
+
+- `Short Audio` records locally, converts to WAV, and sends the result to `POST /v1/transcriptions`
+- `Realtime` downsamples to `pcm_s16le 16 kHz mono` and streams binary chunks to `GET /v1/realtime`
+
+For browser microphone access, use `localhost`, `127.0.0.1`, or HTTPS.
+
+## Troubleshooting
+
+If container logs include `onnxruntime cpuid_info warning: Unknown CPU vendor`, this is typically an ONNX Runtime CPU detection warning on ARM or virtualized environments, not a model-load failure. The container now sets `ORT_LOG=error` to reduce that noise in normal runs.
 
 ## Development
 
