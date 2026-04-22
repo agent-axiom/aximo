@@ -1,4 +1,6 @@
-FROM rust:1.88-bookworm AS builder
+# ort/onnxruntime prebuilt binaries used by transcribe-rs on aarch64 require
+# newer glibc/libstdc++ symbols than Debian bookworm provides.
+FROM rust:1.88-trixie AS builder
 
 WORKDIR /app
 
@@ -6,7 +8,7 @@ COPY . .
 
 RUN cargo build --release -p aximo --locked
 
-FROM debian:bookworm-slim
+FROM debian:trixie-slim
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates \
