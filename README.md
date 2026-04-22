@@ -18,14 +18,14 @@
 
 Architecture and protocol details live in:
 
-- [docs/architecture.md](/Users/if/PycharmProjects/agent-axiom/aximo/docs/architecture.md)
-- [docs/client-examples.md](/Users/if/PycharmProjects/agent-axiom/aximo/docs/client-examples.md)
-- [docs/realtime-protocol.md](/Users/if/PycharmProjects/agent-axiom/aximo/docs/realtime-protocol.md)
-- [docs/model-licenses.md](/Users/if/PycharmProjects/agent-axiom/aximo/docs/model-licenses.md)
+- [docs/architecture.md](docs/architecture.md)
+- [docs/client-examples.md](docs/client-examples.md)
+- [docs/realtime-protocol.md](docs/realtime-protocol.md)
+- [docs/model-licenses.md](docs/model-licenses.md)
 
 ## Models
 
-Models are runtime artifacts and must live outside git. The service expects a model root directory configured via [config/aximo.example.toml](/Users/if/PycharmProjects/agent-axiom/aximo/config/aximo.example.toml).
+Models are runtime artifacts and must live outside git. The service expects a model root directory configured via [config/aximo.example.toml](config/aximo.example.toml).
 
 Compatible model bundles for the current `transcribe-rs` integration:
 
@@ -63,17 +63,17 @@ After the model is downloaded to `./var/models`:
 docker compose up --build
 ```
 
-This uses [docker-compose.yml](/Users/if/PycharmProjects/agent-axiom/aximo/docker-compose.yml), mounts `./var/models` into the container, and serves the API on `http://127.0.0.1:8080`.
+This uses [docker-compose.yml](docker-compose.yml), mounts `./var/models` into the container, and serves the API on `http://127.0.0.1:8080`.
 
 ## Local Run
 
-For local non-Docker usage, use [config/aximo.local.toml](/Users/if/PycharmProjects/agent-axiom/aximo/config/aximo.local.toml), which points to `./var/models`:
+For local non-Docker usage, use [config/aximo.local.toml](config/aximo.local.toml), which points to `./var/models`:
 
 ```bash
 AXIMO_CONFIG=config/aximo.local.toml cargo run -p aximo
 ```
 
-For containerized usage, [config/aximo.example.toml](/Users/if/PycharmProjects/agent-axiom/aximo/config/aximo.example.toml) remains the default and expects models at `/var/lib/aximo/models`.
+For containerized usage, [config/aximo.example.toml](config/aximo.example.toml) remains the default and expects models at `/var/lib/aximo/models`.
 
 ## Short Audio Example
 
@@ -139,7 +139,7 @@ After the service starts:
 
 - Swagger UI: [http://127.0.0.1:8080/docs/](http://127.0.0.1:8080/docs/)
 - OpenAPI JSON: [http://127.0.0.1:8080/openapi.json](http://127.0.0.1:8080/openapi.json)
-- Client examples: [docs/client-examples.md](/Users/if/PycharmProjects/agent-axiom/aximo/docs/client-examples.md)
+- Client examples: [docs/client-examples.md](docs/client-examples.md)
 
 The `/docs/` page also includes an `Aximo Recorder` panel that can capture microphone audio in the browser:
 
@@ -176,4 +176,4 @@ The `aximo` service crate is intentionally marked `publish = false`.
 
 Use `just package-libs` for the local pre-publish check of `aximo-core` and `aximo-audio`. `aximo-inference` must be dry-run published only after `aximo-core` is already available in the `crates.io` index.
 
-Release workflow notes are documented in [docs/publishing.md](/Users/if/PycharmProjects/agent-axiom/aximo/docs/publishing.md).
+Release workflow notes are documented in [docs/publishing.md](docs/publishing.md).
