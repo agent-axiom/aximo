@@ -29,6 +29,7 @@ async fn transcription_endpoint_returns_fake_engine_result() {
 
     assert_eq!(json["text"], "hello world");
     assert_eq!(json["engine"], "fake");
+    assert!(json["detected_language"].is_null());
 }
 
 #[tokio::test]

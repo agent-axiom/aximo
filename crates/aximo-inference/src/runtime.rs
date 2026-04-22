@@ -3,6 +3,7 @@ use std::{
     path::{Path, PathBuf},
     str::FromStr,
     sync::{Arc, Mutex},
+    time::Instant,
 };
 
 use aximo_core::{ShortAudioRequest, ShortAudioResult};
@@ -120,8 +121,10 @@ impl<R: ModelRunner> SpeechEngine for TranscribeRsEngine<R> {
         &self,
         request: ShortAudioRequest,
     ) -> Result<ShortAudioResult, InferenceError> {
+        let started_at = Instant::now();
         let wav_file = materialize_as_wav(&request)?;
         let wav_path = wav_file.path();
+        let duration_ms = wav_duration_ms(wav_path)?;
 
         let mut model = self.model.lock().expect("transcribe-rs model lock");
         let text = model.transcribe_file(wav_path, request.language_hint.clone())?;
@@ -129,12 +132,28 @@ impl<R: ModelRunner> SpeechEngine for TranscribeRsEngine<R> {
         Ok(ShortAudioResult {
             text,
             segments: Vec::new(),
-            detected_language: request.language_hint.unwrap_or_else(|| "auto".to_string()),
+            detected_language: None,
             engine: self.engine_name.clone(),
-            duration_ms: 0,
-            processing_ms: 0,
+            duration_ms,
+            processing_ms: started_at.elapsed().as_millis() as u64,
         })
     }
+}
+
+fn wav_duration_ms(path: &Path) -> Result<u64, InferenceError> {
+    let reader = hound::WavReader::open(path).map_err(io_error)?;
+    let spec = reader.spec();
+    let sample_rate = u64::from(spec.sample_rate);
+    let channels = u64::from(spec.channels);
+
+    if sample_rate == 0 || channels == 0 {
+        return Err(InferenceError::InvalidAudio(
+            "wav metadata must declare non-zero sample rate and channels".to_string(),
+        ));
+    }
+
+    let frames = u64::from(reader.duration()) / channels;
+    Ok(frames.saturating_mul(1000) / sample_rate)
 }
 
 fn materialize_as_wav(request: &ShortAudioRequest) -> Result<NamedTempFile, InferenceError> {
@@ -187,11 +206,14 @@ fn io_error(error: impl ToString) -> InferenceError {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use super::*;
 
     struct FakeRunner {
         text: String,
         seen_header: Option<[u8; 4]>,
+        sleep_for: Option<Duration>,
     }
 
     impl FakeRunner {
@@ -199,6 +221,15 @@ mod tests {
             Self {
                 text: text.to_string(),
                 seen_header: None,
+                sleep_for: None,
+            }
+        }
+
+        fn with_delay(text: &str, sleep_for: Duration) -> Self {
+            Self {
+                text: text.to_string(),
+                seen_header: None,
+                sleep_for: Some(sleep_for),
             }
         }
     }
@@ -211,6 +242,9 @@ mod tests {
         ) -> Result<String, InferenceError> {
             let bytes = std::fs::read(path).map_err(io_error)?;
             self.seen_header = Some(bytes[0..4].try_into().expect("wav header"));
+            if let Some(delay) = self.sleep_for {
+                std::thread::sleep(delay);
+            }
             Ok(self.text.clone())
         }
     }
@@ -287,7 +321,30 @@ mod tests {
         let result = engine.transcribe_short(request).unwrap();
 
         assert_eq!(result.text, "decoded text");
-        assert_eq!(result.detected_language, "ru");
+        assert_eq!(result.detected_language, None);
         assert_eq!(engine.model.lock().unwrap().seen_header, Some(*b"RIFF"));
+    }
+
+    #[test]
+    fn transcribe_short_reports_measured_duration_and_processing_time() {
+        let engine = TranscribeRsEngine {
+            engine_name: "fake".to_string(),
+            model: Mutex::new(FakeRunner::with_delay(
+                "decoded text",
+                Duration::from_millis(5),
+            )),
+        };
+        let request = ShortAudioRequest {
+            audio_bytes: vec![0_u8; 32_000],
+            content_type: "audio/pcm".to_string(),
+            engine: None,
+            language_hint: None,
+            timestamps: false,
+        };
+
+        let result = engine.transcribe_short(request).unwrap();
+
+        assert_eq!(result.duration_ms, 1_000);
+        assert!(result.processing_ms >= 5);
     }
 }

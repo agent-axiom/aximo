@@ -97,12 +97,14 @@ Example response:
 {
   "text": "hello world",
   "segments": [],
-  "detected_language": "en",
-  "engine": "fake",
-  "duration_ms": 0,
-  "processing_ms": 0
+  "detected_language": null,
+  "engine": "parakeet",
+  "duration_ms": 1000,
+  "processing_ms": 37
 }
 ```
+
+`detected_language` is `null` when the current engine integration does not expose language detection. `segments` stays empty when segmentation or timestamps are unavailable. `duration_ms` and `processing_ms` are measured values and vary per request.
 
 ## Realtime Example
 

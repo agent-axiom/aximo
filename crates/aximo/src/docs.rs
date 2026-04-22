@@ -51,11 +51,20 @@ struct AudioBinaryBodyDoc(Vec<u8>);
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 struct ShortAudioResultDoc {
+    /// Full transcript text for the request.
     text: String,
+    /// Transcript segments when the current engine integration exposes
+    /// segmentation; empty when unavailable.
     segments: Vec<TranscriptSegmentDoc>,
-    detected_language: String,
+    /// Language detected by the model, or `null` when the current engine
+    /// integration does not expose language detection.
+    #[schema(nullable)]
+    detected_language: Option<String>,
+    /// Engine identifier that produced the transcription.
     engine: String,
+    /// Measured input audio duration in milliseconds.
     duration_ms: u64,
+    /// Measured processing time in milliseconds for the completed transcription.
     processing_ms: u64,
 }
 

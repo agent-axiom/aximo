@@ -13,7 +13,7 @@ pub struct ShortAudioRequest {
 pub struct ShortAudioResult {
     pub text: String,
     pub segments: Vec<TranscriptSegment>,
-    pub detected_language: String,
+    pub detected_language: Option<String>,
     pub engine: String,
     pub duration_ms: u64,
     pub processing_ms: u64,
@@ -24,7 +24,7 @@ impl ShortAudioResult {
         Self {
             text: text.into(),
             segments: Vec::new(),
-            detected_language: "en".to_string(),
+            detected_language: None,
             engine: engine.into(),
             duration_ms: 0,
             processing_ms: 0,
