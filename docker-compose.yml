@@ -1,0 +1,13 @@
+services:
+  aximo:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: aximo:local
+    environment:
+      AXIMO_CONFIG: /app/config/aximo.toml
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./config/aximo.example.toml:/app/config/aximo.toml:ro
+      - ./var/models:/var/lib/aximo/models:ro

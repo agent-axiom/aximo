@@ -1,0 +1,9 @@
+.git
+.github
+.idea
+target
+var
+badges
+docs
+tests
+.DS_Store

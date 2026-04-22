@@ -26,6 +26,12 @@ Architecture and protocol details live in:
 
 Models are runtime artifacts and must live outside git. The service expects a model root directory configured via [config/aximo.example.toml](/Users/if/PycharmProjects/agent-axiom/aximo/config/aximo.example.toml).
 
+Compatible model bundles for the current `transcribe-rs` integration:
+
+- Parakeet int8 ONNX bundle: [blob.handy.computer/parakeet-v3-int8.tar.gz](https://blob.handy.computer/parakeet-v3-int8.tar.gz)
+- Parakeet int8 ONNX bundle on Hugging Face: [istupakov/parakeet-tdt-0.6b-v3-onnx](https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx/tree/main)
+- GigaAM v3 ONNX bundle on Hugging Face: [istupakov/gigaam-v3-onnx](https://huggingface.co/istupakov/gigaam-v3-onnx/tree/main)
+
 Example layout:
 
 ```text
@@ -34,16 +40,39 @@ Example layout:
 └── giga-am-v3/
 ```
 
-## Local Run
+## Quick Start
 
-Use the example config as a starting point:
+Download the default `Parakeet` model bundle:
 
 ```bash
-cp config/aximo.example.toml /tmp/aximo.toml
-AXIMO_CONFIG=/tmp/aximo.toml cargo run -p aximo
+just setup-models
 ```
 
-The default bind address is `0.0.0.0:8080`.
+or directly:
+
+```bash
+./scripts/fetch-models.sh
+```
+
+### Docker Compose
+
+After the model is downloaded to `./var/models`:
+
+```bash
+docker compose up --build
+```
+
+This uses [docker-compose.yml](/Users/if/PycharmProjects/agent-axiom/aximo/docker-compose.yml), mounts `./var/models` into the container, and serves the API on `http://127.0.0.1:8080`.
+
+## Local Run
+
+For local non-Docker usage, use [config/aximo.local.toml](/Users/if/PycharmProjects/agent-axiom/aximo/config/aximo.local.toml), which points to `./var/models`:
+
+```bash
+AXIMO_CONFIG=config/aximo.local.toml cargo run -p aximo
+```
+
+For containerized usage, [config/aximo.example.toml](/Users/if/PycharmProjects/agent-axiom/aximo/config/aximo.example.toml) remains the default and expects models at `/var/lib/aximo/models`.
 
 ## Short Audio Example
 
@@ -119,6 +148,7 @@ just fmt
 just lint
 just test
 just coverage
+just setup-models
 ```
 
 ## crates.io
