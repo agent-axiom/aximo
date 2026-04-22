@@ -1,0 +1,134 @@
+# Aximo
+
+`aximo` is a CPU-first STT microservice for Russian and English built as a Rust Cargo workspace. It exposes:
+
+- `POST /v1/transcriptions` for short audio
+- `GET /v1/realtime` for realtime WebSocket streaming
+- `GET /openapi.json` for the OpenAPI schema
+- `GET /docs/` for Swagger UI
+
+## Workspace
+
+- `crates/aximo`: HTTP and WebSocket service binary
+- `crates/aximo-core`: scheduler and shared STT domain types
+- `crates/aximo-inference`: `transcribe-rs` adapters for local CPU models
+- `crates/aximo-audio`: audio helpers
+
+Architecture and protocol details live in:
+
+- [docs/architecture.md](/Users/if/PycharmProjects/agent-axiom/aximo/docs/architecture.md)
+- [docs/realtime-protocol.md](/Users/if/PycharmProjects/agent-axiom/aximo/docs/realtime-protocol.md)
+- [docs/model-licenses.md](/Users/if/PycharmProjects/agent-axiom/aximo/docs/model-licenses.md)
+
+## Models
+
+Models are runtime artifacts and must live outside git. The service expects a model root directory configured via [config/aximo.example.toml](/Users/if/PycharmProjects/agent-axiom/aximo/config/aximo.example.toml).
+
+Example layout:
+
+```text
+/var/lib/aximo/models/
+├── parakeet-tdt-0.6b-v3-int8/
+└── giga-am-v3/
+```
+
+## Local Run
+
+Use the example config as a starting point:
+
+```bash
+cp config/aximo.example.toml /tmp/aximo.toml
+AXIMO_CONFIG=/tmp/aximo.toml cargo run -p aximo
+```
+
+The default bind address is `0.0.0.0:8080`.
+
+## Short Audio Example
+
+Short transcription currently accepts:
+
+- `audio/wav`
+- `audio/pcm`
+- `application/octet-stream`
+
+`audio/pcm` and `application/octet-stream` are interpreted as raw `pcm_s16le`, `16 kHz`, mono audio.
+
+```bash
+curl -X POST http://127.0.0.1:8080/v1/transcriptions \
+  -H 'content-type: audio/wav' \
+  --data-binary @sample.wav
+```
+
+Example response:
+
+```json
+{
+  "text": "hello world",
+  "segments": [],
+  "detected_language": "en",
+  "engine": "fake",
+  "duration_ms": 0,
+  "processing_ms": 0
+}
+```
+
+## Realtime Example
+
+Realtime uses WebSocket and raw `pcm_s16le`, `16 kHz`, mono binary chunks.
+
+```js
+const ws = new WebSocket("ws://127.0.0.1:8080/v1/realtime");
+ws.binaryType = "arraybuffer";
+
+ws.addEventListener("message", (event) => {
+  console.log("server:", event.data);
+});
+
+ws.addEventListener("open", async () => {
+  ws.send(JSON.stringify({ event: "start" }));
+
+  const pcmChunk = new Uint8Array([0, 0, 1, 0, 2, 0, 3, 0]);
+  ws.send(pcmChunk);
+
+  ws.send(JSON.stringify({ event: "stop" }));
+});
+```
+
+Expected server events:
+
+- `session_started`
+- `partial`
+- `final`
+- `error`
+
+## API Docs
+
+After the service starts:
+
+- Swagger UI: [http://127.0.0.1:8080/docs/](http://127.0.0.1:8080/docs/)
+- OpenAPI JSON: [http://127.0.0.1:8080/openapi.json](http://127.0.0.1:8080/openapi.json)
+
+## Development
+
+Common checks:
+
+```bash
+just fmt
+just lint
+just test
+just coverage
+```
+
+## crates.io
+
+The publishable library crates are:
+
+- `aximo-core`
+- `aximo-audio`
+- `aximo-inference`
+
+The `aximo` service crate is intentionally marked `publish = false`.
+
+Use `just package-libs` for the local pre-publish check of `aximo-core` and `aximo-audio`. `aximo-inference` must be dry-run published only after `aximo-core` is already available in the `crates.io` index.
+
+Release workflow notes are documented in [docs/publishing.md](/Users/if/PycharmProjects/agent-axiom/aximo/docs/publishing.md).

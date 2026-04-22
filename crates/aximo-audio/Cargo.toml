@@ -1,8 +1,13 @@
 [package]
 name = "aximo-audio"
+categories = ["multimedia::audio"]
+description = "Audio normalization and chunking helpers for Aximo."
 edition.workspace = true
+homepage.workspace = true
+keywords = ["audio", "speech-to-text", "stt"]
 license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
 version.workspace = true
 
 [dependencies]
-

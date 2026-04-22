@@ -1,11 +1,17 @@
 [package]
 name = "aximo-inference"
+categories = ["multimedia::audio"]
+description = "Inference adapters for local CPU speech-to-text engines used by Aximo."
 edition.workspace = true
+homepage.workspace = true
+keywords = ["speech-to-text", "stt", "onnx", "transcription"]
 license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
 version.workspace = true
 
 [dependencies]
-aximo-core = { path = "../aximo-core" }
+aximo-core.workspace = true
 hound.workspace = true
 tempfile.workspace = true
 thiserror.workspace = true

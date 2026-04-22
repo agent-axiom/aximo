@@ -1,13 +1,18 @@
 [package]
 name = "aximo"
+description = "CPU-first STT microservice binary and HTTP API for local models."
 edition.workspace = true
+homepage.workspace = true
 license.workspace = true
+publish = false
+repository.workspace = true
+rust-version.workspace = true
 version.workspace = true
 
 [dependencies]
 anyhow.workspace = true
-aximo-core = { path = "../aximo-core" }
-aximo-inference = { path = "../aximo-inference" }
+aximo-core.workspace = true
+aximo-inference.workspace = true
 axum.workspace = true
 futures-util.workspace = true
 serde.workspace = true
@@ -19,6 +24,8 @@ tower.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 thiserror.workspace = true
+utoipa.workspace = true
+utoipa-swagger-ui.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

@@ -1,7 +1,13 @@
 [package]
 name = "aximo-core"
+categories = ["multimedia::audio", "web-programming"]
+description = "Core scheduling and shared STT domain types for Aximo."
 edition.workspace = true
+homepage.workspace = true
+keywords = ["speech-to-text", "stt", "audio", "scheduler"]
 license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
 version.workspace = true
 
 [dependencies]

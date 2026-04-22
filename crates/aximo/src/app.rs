@@ -39,6 +39,7 @@ pub fn build_app(
             "/v1/realtime",
             axum::routing::get(ws::handler::realtime_socket),
         )
+        .merge(crate::docs::router())
         .with_state(state)
 }
 

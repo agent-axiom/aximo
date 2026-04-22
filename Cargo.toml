@@ -9,10 +9,16 @@ resolver = "2"
 
 [workspace.package]
 edition = "2021"
+homepage = "https://github.com/agent-axiom/aximo"
 license = "MIT"
+repository = "https://github.com/agent-axiom/aximo"
+rust-version = "1.88"
 version = "0.1.0"
 
 [workspace.dependencies]
+aximo-audio = { path = "crates/aximo-audio", version = "0.1.0" }
+aximo-core = { path = "crates/aximo-core", version = "0.1.0" }
+aximo-inference = { path = "crates/aximo-inference", version = "0.1.0" }
 anyhow = "1.0.95"
 axum = { version = "0.7.9", features = ["ws"] }
 futures-util = "0.3.31"
@@ -28,3 +34,5 @@ transcribe-rs = { version = "0.3", features = ["onnx"] }
 tower = { version = "0.5.2", features = ["util"] }
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.19", features = ["fmt", "env-filter"] }
+utoipa = "5.4.0"
+utoipa-swagger-ui = { version = "8.0.3", features = ["axum", "vendored"] }
