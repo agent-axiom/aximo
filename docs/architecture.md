@@ -51,14 +51,14 @@ sequenceDiagram
     W-->>C: session_started
     C->>W: binary audio chunk
     W->>M: append chunk
-    W->>S: try acquire realtime inference permit
+    W->>S: await realtime inference permit
     S-->>W: inference permit
     W->>E: transcribe_short(rolling buffer)
     E-->>W: partial text
     W-->>C: partial
     C->>W: stop
     W->>M: finish session
-    W->>S: try acquire realtime inference permit
+    W->>S: await realtime inference permit
     S-->>W: inference permit
     W->>E: transcribe_short(final buffer)
     E-->>W: final text

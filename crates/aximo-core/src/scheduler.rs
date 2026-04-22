@@ -52,6 +52,14 @@ impl Scheduler {
             .try_acquire_owned()
             .map_err(map_capacity_error)
     }
+
+    pub async fn acquire_realtime_inference(&self) -> OwnedSemaphorePermit {
+        self.realtime_inferences
+            .clone()
+            .acquire_owned()
+            .await
+            .expect("realtime inference semaphore closed")
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -70,12 +70,8 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
                                 timestamps: false,
                             };
 
-                            let Ok(_inference_permit) =
-                                state.scheduler.try_acquire_realtime_inference()
-                            else {
-                                let _ = send_event(&mut socket, ServerEvent::error()).await;
-                                continue;
-                            };
+                            let _inference_permit =
+                                state.scheduler.acquire_realtime_inference().await;
 
                             match run_blocking_inference(state.realtime_engine.clone(), request)
                                 .await
@@ -119,11 +115,7 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
                             timestamps: false,
                         };
 
-                        let Ok(_inference_permit) =
-                            state.scheduler.try_acquire_realtime_inference()
-                        else {
-                            continue;
-                        };
+                        let _inference_permit = state.scheduler.acquire_realtime_inference().await;
 
                         match run_blocking_inference(state.realtime_engine.clone(), request).await {
                             Ok(result) => {
