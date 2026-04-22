@@ -15,6 +15,7 @@ env:
 jobs:
   fmt:
     name: Rustfmt
+    if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -24,6 +25,7 @@ jobs:
 
   clippy:
     name: Clippy
+    if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -33,6 +35,7 @@ jobs:
 
   test:
     name: Test
+    if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -42,7 +45,10 @@ jobs:
 
   coverage:
     name: Coverage
+    if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v5
       - uses: actions-rust-lang/setup-rust-toolchain@v1
@@ -50,5 +56,36 @@ jobs:
           components: llvm-tools-preview
       - name: Install cargo-llvm-cov
         run: cargo install cargo-llvm-cov --locked
-      - name: Check coverage threshold
-        run: cargo llvm-cov --workspace --summary-only --fail-under-lines 88
+      - name: Generate coverage summary
+        run: cargo llvm-cov --workspace --json --summary-only --output-path coverage-summary.json --fail-under-lines 88
+      - name: Update coverage badge data
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          percent="$(jq -r '.data[0].totals.lines.percent' coverage-summary.json)"
+          rounded="$(printf '%.2f' "$percent")"
+          color="$(awk -v p="$percent" 'BEGIN {
+            if (p >= 90) print "brightgreen";
+            else if (p >= 80) print "green";
+            else if (p >= 70) print "yellow";
+            else if (p >= 60) print "orange";
+            else print "red";
+          }')"
+
+          mkdir -p badges
+          jq -n \
+            --arg label "coverage" \
+            --arg message "${rounded}%" \
+            --arg color "$color" \
+            '{schemaVersion: 1, label: $label, message: $message, color: $color}' \
+            > badges/coverage.json
+
+          if git diff --quiet -- badges/coverage.json; then
+            echo "Coverage badge is up to date: ${rounded}%"
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add badges/coverage.json
+          git commit -m "Update coverage badge"
+          git push

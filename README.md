@@ -1,5 +1,7 @@
 # Aximo
 
+[![Coverage](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/agent-axiom/aximo/main/badges/coverage.json)](https://github.com/agent-axiom/aximo/actions/workflows/ci.yml)
+
 `aximo` is a CPU-first STT microservice for Russian and English built as a Rust Cargo workspace. It exposes:
 
 - `POST /v1/transcriptions` for short audio
