@@ -80,10 +80,14 @@ For containerized usage, [config/aximo.example.toml](config/aximo.example.toml) 
 Short transcription currently accepts:
 
 - `audio/wav`
+- `audio/mpeg`
+- `audio/flac`
+- `audio/mp4`
+- `audio/x-m4a`
 - `audio/pcm`
 - `application/octet-stream`
 
-`audio/pcm` and `application/octet-stream` are interpreted as raw `pcm_s16le`, `16 kHz`, mono audio.
+Compressed/container formats are decoded and normalized before inference. `audio/pcm` and `application/octet-stream` are still interpreted as raw `pcm_s16le`, `16 kHz`, mono audio.
 
 ```bash
 curl -X POST http://127.0.0.1:8080/v1/transcriptions \

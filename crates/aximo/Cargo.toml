@@ -11,6 +11,7 @@ version.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+aximo-audio.workspace = true
 aximo-core.workspace = true
 aximo-inference.workspace = true
 axum.workspace = true

@@ -120,7 +120,7 @@ fn health_ready_doc() {}
     request_body(
         content = AudioBinaryBodyDoc,
         content_type = "application/octet-stream",
-        description = "Raw audio bytes. Set Content-Type to audio/wav, audio/pcm, or application/octet-stream."
+        description = "Binary audio bytes. Supported Content-Type values include audio/wav, audio/mpeg, audio/flac, audio/mp4, audio/x-m4a, audio/pcm, and application/octet-stream."
     ),
     responses(
         (status = 200, description = "Transcription completed. Optional metadata remains null or empty when the active engine integration does not expose it.", body = ShortAudioResultDoc),

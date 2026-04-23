@@ -1,3 +1,4 @@
+use aximo_audio::AudioError;
 use aximo_core::{ShortAudioRequest, ShortAudioResult};
 use aximo_inference::engine::InferenceError;
 use axum::{
@@ -61,10 +62,12 @@ pub async fn transcribe_short(
         .and_then(|value| value.to_str().ok())
         .unwrap_or("application/octet-stream")
         .to_string();
+    let prepared_audio =
+        aximo_audio::prepare_short_audio(body.as_ref(), &content_type).map_err(map_audio_error)?;
 
     let request = ShortAudioRequest {
-        audio_bytes: body.to_vec(),
-        content_type,
+        audio_bytes: prepared_audio.audio_bytes,
+        content_type: prepared_audio.content_type.to_string(),
         engine: None,
         language_hint: None,
         timestamps: false,
@@ -82,6 +85,22 @@ pub async fn transcribe_short(
         .await
         .map(Json)
         .map_err(map_inference_error)
+}
+
+fn map_audio_error(error: AudioError) -> HttpError {
+    let message = match error {
+        AudioError::UnsupportedContentType(message) => {
+            format!("unsupported content type {message}")
+        }
+        AudioError::InvalidPcm(message) => message,
+        AudioError::Decode(message) => format!("failed to decode audio container: {message}"),
+    };
+
+    HttpError::new(
+        StatusCode::BAD_REQUEST,
+        "invalid_audio",
+        format!("invalid audio payload: {message}"),
+    )
 }
 
 fn map_inference_error(error: InferenceError) -> HttpError {

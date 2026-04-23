@@ -9,7 +9,7 @@ Assumptions used below:
 - Realtime examples stream a pre-existing `.pcm` file to `GET /v1/realtime`
 - Realtime audio must be raw `pcm_s16le`, `16 kHz`, mono
 
-If your source audio is WAV/MP3/M4A, use `POST /v1/transcriptions`. If you want realtime streaming, convert the input into raw PCM first.
+`POST /v1/transcriptions` currently accepts `audio/wav`, `audio/mpeg`, `audio/flac`, `audio/mp4`, `audio/x-m4a`, `audio/pcm`, and `application/octet-stream`. If you want realtime streaming, convert the input into raw PCM first.
 
 ## TypeScript
 

@@ -11,3 +11,6 @@ rust-version.workspace = true
 version.workspace = true
 
 [dependencies]
+hound.workspace = true
+symphonia.workspace = true
+thiserror.workspace = true

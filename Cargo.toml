@@ -25,6 +25,7 @@ futures-util = "0.3.32"
 hound = "3.5.1"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
+symphonia = { version = "0.5.4", default-features = false, features = ["aac", "flac", "isomp4", "mp3", "pcm", "wav"] }
 tempfile = "3.27.0"
 thiserror = "2.0.18"
 tokio = { version = "1.52.1", features = ["macros", "net", "rt-multi-thread", "sync"] }

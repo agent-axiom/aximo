@@ -2,6 +2,7 @@ use axum::{
     body::{to_bytes, Body},
     http::{Request, StatusCode},
 };
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::{mpsc, Mutex};
 use tokio::sync::oneshot;
@@ -79,6 +80,12 @@ impl aximo_inference::engine::SpeechEngine for StaticErrorEngine {
     }
 }
 
+fn fixture_bytes(name: &str) -> Vec<u8> {
+    let fixtures_dir =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../aximo-audio/tests/fixtures");
+    std::fs::read(fixtures_dir.join(name)).unwrap()
+}
+
 #[tokio::test]
 async fn transcription_endpoint_returns_fake_engine_result() {
     let app = aximo::app::build_test_app().await;
@@ -88,7 +95,7 @@ async fn transcription_endpoint_returns_fake_engine_result() {
                 .method("POST")
                 .uri("/v1/transcriptions")
                 .header("content-type", "audio/wav")
-                .body(Body::from(vec![0_u8; 3200]))
+                .body(Body::from(fixture_bytes("tone-16k-mono.wav")))
                 .unwrap(),
         )
         .await
@@ -108,6 +115,60 @@ async fn transcription_endpoint_returns_fake_engine_result() {
 }
 
 #[tokio::test]
+async fn transcription_endpoint_accepts_mp3_input() {
+    let app = aximo::app::build_test_app().await;
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/transcriptions")
+                .header("content-type", "audio/mpeg")
+                .body(Body::from(fixture_bytes("tone-16k-mono.mp3")))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn transcription_endpoint_accepts_flac_input() {
+    let app = aximo::app::build_test_app().await;
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/transcriptions")
+                .header("content-type", "audio/flac")
+                .body(Body::from(fixture_bytes("tone-16k-mono.flac")))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn transcription_endpoint_accepts_m4a_input() {
+    let app = aximo::app::build_test_app().await;
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/transcriptions")
+                .header("content-type", "audio/mp4")
+                .body(Body::from(fixture_bytes("tone-16k-mono.m4a")))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
+#[tokio::test]
 async fn transcription_endpoint_returns_service_unavailable_when_engine_fails() {
     let app = aximo::app::build_app(
         aximo::config::Settings::default(),
@@ -122,7 +183,7 @@ async fn transcription_endpoint_returns_service_unavailable_when_engine_fails() 
                 .method("POST")
                 .uri("/v1/transcriptions")
                 .header("content-type", "audio/wav")
-                .body(Body::from(vec![0_u8; 3200]))
+                .body(Body::from(fixture_bytes("tone-16k-mono.wav")))
                 .unwrap(),
         )
         .await
@@ -155,13 +216,13 @@ async fn transcription_endpoint_returns_structured_capacity_error() {
         .method("POST")
         .uri("/v1/transcriptions")
         .header("content-type", "audio/wav")
-        .body(Body::from(vec![0_u8; 3200]))
+        .body(Body::from(fixture_bytes("tone-16k-mono.wav")))
         .unwrap();
     let second_request = Request::builder()
         .method("POST")
         .uri("/v1/transcriptions")
         .header("content-type", "audio/wav")
-        .body(Body::from(vec![0_u8; 3200]))
+        .body(Body::from(fixture_bytes("tone-16k-mono.wav")))
         .unwrap();
 
     let app_for_first = app.clone();
@@ -207,13 +268,13 @@ async fn transcription_endpoint_returns_structured_inference_capacity_error() {
         .method("POST")
         .uri("/v1/transcriptions")
         .header("content-type", "audio/wav")
-        .body(Body::from(vec![0_u8; 3200]))
+        .body(Body::from(fixture_bytes("tone-16k-mono.wav")))
         .unwrap();
     let second_request = Request::builder()
         .method("POST")
         .uri("/v1/transcriptions")
         .header("content-type", "audio/wav")
-        .body(Body::from(vec![0_u8; 3200]))
+        .body(Body::from(fixture_bytes("tone-16k-mono.wav")))
         .unwrap();
 
     let app_for_first = app.clone();
@@ -294,7 +355,7 @@ async fn transcription_endpoint_returns_bad_request_for_unsupported_engine() {
                 .method("POST")
                 .uri("/v1/transcriptions")
                 .header("content-type", "audio/wav")
-                .body(Body::from(vec![0_u8; 3200]))
+                .body(Body::from(fixture_bytes("tone-16k-mono.wav")))
                 .unwrap(),
         )
         .await
@@ -326,7 +387,7 @@ async fn transcription_endpoint_returns_internal_error_for_runtime_failure() {
                 .method("POST")
                 .uri("/v1/transcriptions")
                 .header("content-type", "audio/wav")
-                .body(Body::from(vec![0_u8; 3200]))
+                .body(Body::from(fixture_bytes("tone-16k-mono.wav")))
                 .unwrap(),
         )
         .await
