@@ -16,6 +16,12 @@ use transcribe_rs::{
 
 use crate::engine::{InferenceError, SpeechEngine};
 
+// Current transcribe-rs ONNX integrations used here return plain transcript text
+// to this adapter path. They do not expose per-segment timestamps or detected
+// language through the current model adapter interface, so this runtime keeps
+// `segments` empty and `detected_language` as `None` while still reporting
+// measured input duration and processing time.
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EngineKind {
     Parakeet,
@@ -321,7 +327,9 @@ mod tests {
         let result = engine.transcribe_short(request).unwrap();
 
         assert_eq!(result.text, "decoded text");
+        assert!(result.segments.is_empty());
         assert_eq!(result.detected_language, None);
+        assert_eq!(result.engine, "fake");
         assert_eq!(engine.model.lock().unwrap().seen_header, Some(*b"RIFF"));
     }
 

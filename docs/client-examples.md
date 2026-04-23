@@ -239,4 +239,5 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 - `POST /v1/transcriptions` is the easiest integration path if you already have a browser upload, a recorded WAV file, or a server-side audio file.
 - `GET /v1/realtime` is lower-level and expects transport-ready PCM chunks.
+- For the current `transcribe-rs` ONNX adapters, `detected_language` may be `null` and `segments` may be an empty array when the backend only exposes plain transcript text.
 - Browser microphone capture is available interactively from Swagger UI at `http://127.0.0.1:8080/docs/`.

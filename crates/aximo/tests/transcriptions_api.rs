@@ -100,8 +100,11 @@ async fn transcription_endpoint_returns_fake_engine_result() {
     let json: Value = serde_json::from_slice(&body).unwrap();
 
     assert_eq!(json["text"], "hello world");
+    assert_eq!(json["segments"], serde_json::json!([]));
     assert_eq!(json["engine"], "fake");
     assert!(json["detected_language"].is_null());
+    assert!(json["duration_ms"].is_number());
+    assert!(json["processing_ms"].is_number());
 }
 
 #[tokio::test]

@@ -104,7 +104,7 @@ Example response:
 }
 ```
 
-`detected_language` is `null` when the current engine integration does not expose language detection. `segments` stays empty when segmentation or timestamps are unavailable. `duration_ms` and `processing_ms` are measured values and vary per request.
+With the current `transcribe-rs` ONNX adapters used here, `detected_language` is `null` when language detection is not exposed and `segments` stays empty when segmentation or timestamps are unavailable. `duration_ms` and `processing_ms` are measured values and vary per request.
 
 Error responses from `POST /v1/transcriptions` are structured JSON:
 
