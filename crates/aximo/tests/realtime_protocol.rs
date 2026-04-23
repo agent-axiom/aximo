@@ -208,6 +208,46 @@ async fn websocket_session_returns_error_when_capacity_is_exhausted() {
 }
 
 #[tokio::test]
+async fn websocket_session_rejects_audio_after_session_limit() {
+    let mut settings = aximo::config::Settings::default();
+    settings.limits.max_realtime_session_bytes = 3_200;
+    let app = aximo::app::build_app(
+        settings,
+        Arc::new(aximo_inference::engine::FakeEngine),
+        Arc::new(aximo_inference::engine::FakeEngine),
+    );
+    let (url, server) = spawn_server_with_app(app).await;
+    let (mut socket, _) = connect_async(url).await.unwrap();
+
+    socket
+        .send(Message::Text(r#"{"event":"start"}"#.into()))
+        .await
+        .unwrap();
+
+    let started = next_event(&mut socket).await;
+    assert_eq!(started["event"], "session_started");
+
+    socket
+        .send(Message::Binary(vec![0_u8; 6_400].into()))
+        .await
+        .unwrap();
+
+    let oversized = next_event(&mut socket).await;
+    assert_eq!(oversized["event"], "error");
+    assert_eq!(oversized["code"], "realtime_session_too_large");
+
+    socket
+        .send(Message::Text(r#"{"event":"start"}"#.into()))
+        .await
+        .unwrap();
+
+    let restarted = next_event(&mut socket).await;
+    assert_eq!(restarted["event"], "session_started");
+
+    server.abort();
+}
+
+#[tokio::test]
 async fn websocket_session_emits_partial_after_audio_chunk() {
     let (url, server) = spawn_test_server().await;
     let (mut socket, _) = connect_async(url).await.unwrap();

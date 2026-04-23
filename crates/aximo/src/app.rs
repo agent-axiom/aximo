@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use aximo_core::{Scheduler, SessionManager};
+use aximo_core::{RealtimeSessionLimits, Scheduler, SessionManager};
 use aximo_inference::engine::{FakeEngine, SpeechEngine};
 use axum::Router;
 
@@ -12,6 +12,7 @@ pub struct AppState {
     pub realtime_engine: Arc<dyn SpeechEngine>,
     pub session_manager: SessionManager,
     pub scheduler: Scheduler,
+    pub realtime_session_limits: RealtimeSessionLimits,
 }
 
 pub fn build_app(
@@ -29,6 +30,12 @@ pub fn build_app(
             settings.limits.max_short_inferences,
             settings.limits.max_realtime_inferences,
         ),
+        realtime_session_limits: RealtimeSessionLimits {
+            max_bytes: settings.limits.max_realtime_session_bytes,
+            max_duration: std::time::Duration::from_millis(
+                settings.limits.max_realtime_session_duration_ms,
+            ),
+        },
     };
 
     Router::new()

@@ -4,6 +4,7 @@ use std::{
         atomic::{AtomicU64, Ordering},
         Arc, Mutex,
     },
+    time::{Duration, Instant},
 };
 
 use tokio::sync::OwnedSemaphorePermit;
@@ -19,7 +20,11 @@ impl SessionManager {
         Self::default()
     }
 
-    pub fn start_session(&self, capacity_permit: OwnedSemaphorePermit) -> String {
+    pub fn start_session(
+        &self,
+        capacity_permit: OwnedSemaphorePermit,
+        limits: RealtimeSessionLimits,
+    ) -> String {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed) + 1;
         let session_id = format!("session-{id}");
 
@@ -28,6 +33,8 @@ impl SessionManager {
             RealtimeSession {
                 id: session_id.clone(),
                 audio_bytes: Vec::new(),
+                started_at: Instant::now(),
+                limits,
                 capacity_permit,
             },
         );
@@ -40,6 +47,14 @@ impl SessionManager {
         let session = sessions
             .get_mut(session_id)
             .ok_or(SessionError::MissingSession)?;
+
+        if session.started_at.elapsed() > session.limits.max_duration {
+            return Err(SessionError::SessionTooLong);
+        }
+
+        if session.audio_bytes.len().saturating_add(chunk.len()) > session.limits.max_bytes {
+            return Err(SessionError::SessionTooLarge);
+        }
 
         session.audio_bytes.extend_from_slice(chunk);
         Ok(())
@@ -86,6 +101,14 @@ impl SessionManager {
 #[derive(Debug)]
 pub enum SessionError {
     MissingSession,
+    SessionTooLarge,
+    SessionTooLong,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct RealtimeSessionLimits {
+    pub max_bytes: usize,
+    pub max_duration: Duration,
 }
 
 #[derive(Debug)]
@@ -93,6 +116,8 @@ struct RealtimeSession {
     #[allow(dead_code)]
     id: String,
     audio_bytes: Vec<u8>,
+    started_at: Instant,
+    limits: RealtimeSessionLimits,
     #[allow(dead_code)]
     capacity_permit: OwnedSemaphorePermit,
 }

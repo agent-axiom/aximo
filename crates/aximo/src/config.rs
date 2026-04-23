@@ -49,6 +49,8 @@ pub struct LimitSettings {
     pub max_realtime_sessions: usize,
     pub max_short_inferences: usize,
     pub max_realtime_inferences: usize,
+    pub max_realtime_session_bytes: usize,
+    pub max_realtime_session_duration_ms: u64,
 }
 
 impl Default for LimitSettings {
@@ -58,6 +60,8 @@ impl Default for LimitSettings {
             max_realtime_sessions: 24,
             max_short_inferences: 1,
             max_realtime_inferences: 1,
+            max_realtime_session_bytes: 1_920_000,
+            max_realtime_session_duration_ms: 60_000,
         }
     }
 }

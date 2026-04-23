@@ -20,3 +20,5 @@ max_short_audio_requests = 8
 max_realtime_sessions = 24
 max_short_inferences = 1
 max_realtime_inferences = 1
+max_realtime_session_bytes = 1920000
+max_realtime_session_duration_ms = 60000

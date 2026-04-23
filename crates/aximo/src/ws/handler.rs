@@ -54,7 +54,9 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
 
                         match state.scheduler.try_acquire_realtime_session() {
                             Ok(permit) => {
-                                let session_id = state.session_manager.start_session(permit);
+                                let session_id = state
+                                    .session_manager
+                                    .start_session(permit, state.realtime_session_limits);
                                 active_session_id = Some(session_id.clone());
                                 let _ = send_event(
                                     &mut socket,
@@ -134,48 +136,74 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
             }
             Message::Binary(chunk) => {
                 if let Some(session_id) = active_session_id.as_deref() {
-                    if state
-                        .session_manager
-                        .append_audio(session_id, &chunk)
-                        .is_ok()
-                    {
-                        let audio_bytes = state
-                            .session_manager
-                            .recent_audio_snapshot(session_id, REALTIME_PARTIAL_WINDOW_BYTES)
-                            .unwrap_or_default();
-                        let request = ShortAudioRequest {
-                            audio_bytes,
-                            content_type: "audio/pcm".to_string(),
-                            engine: None,
-                            language_hint: None,
-                            timestamps: false,
-                        };
+                    match state.session_manager.append_audio(session_id, &chunk) {
+                        Ok(()) => {
+                            let audio_bytes = state
+                                .session_manager
+                                .recent_audio_snapshot(session_id, REALTIME_PARTIAL_WINDOW_BYTES)
+                                .unwrap_or_default();
+                            let request = ShortAudioRequest {
+                                audio_bytes,
+                                content_type: "audio/pcm".to_string(),
+                                engine: None,
+                                language_hint: None,
+                                timestamps: false,
+                            };
 
-                        let _inference_permit = state.scheduler.acquire_realtime_inference().await;
+                            let _inference_permit =
+                                state.scheduler.acquire_realtime_inference().await;
 
-                        match run_blocking_inference(state.realtime_engine.clone(), request).await {
-                            Ok(result) => {
-                                let _ =
-                                    send_event(&mut socket, ServerEvent::partial_text(result.text))
-                                        .await;
-                            }
-                            Err(error) => {
-                                let _ = send_event(
-                                    &mut socket,
-                                    ServerEvent::error("inference_failed", error.to_string()),
-                                )
-                                .await;
+                            match run_blocking_inference(state.realtime_engine.clone(), request)
+                                .await
+                            {
+                                Ok(result) => {
+                                    let _ = send_event(
+                                        &mut socket,
+                                        ServerEvent::partial_text(result.text),
+                                    )
+                                    .await;
+                                }
+                                Err(error) => {
+                                    let _ = send_event(
+                                        &mut socket,
+                                        ServerEvent::error("inference_failed", error.to_string()),
+                                    )
+                                    .await;
+                                }
                             }
                         }
-                    } else {
-                        let _ = send_event(
-                            &mut socket,
-                            ServerEvent::error(
-                                "audio_append_failed",
-                                "failed to append audio to the active realtime session",
-                            ),
-                        )
-                        .await;
+                        Err(aximo_core::SessionError::SessionTooLarge) => {
+                            cleanup_active_session(&state, &mut active_session_id);
+                            let _ = send_event(
+                                &mut socket,
+                                ServerEvent::error(
+                                    "realtime_session_too_large",
+                                    "realtime session exceeded configured byte limit",
+                                ),
+                            )
+                            .await;
+                        }
+                        Err(aximo_core::SessionError::SessionTooLong) => {
+                            cleanup_active_session(&state, &mut active_session_id);
+                            let _ = send_event(
+                                &mut socket,
+                                ServerEvent::error(
+                                    "realtime_session_too_long",
+                                    "realtime session exceeded configured duration limit",
+                                ),
+                            )
+                            .await;
+                        }
+                        Err(aximo_core::SessionError::MissingSession) => {
+                            let _ = send_event(
+                                &mut socket,
+                                ServerEvent::error(
+                                    "audio_append_failed",
+                                    "failed to append audio to the active realtime session",
+                                ),
+                            )
+                            .await;
+                        }
                     }
                 } else {
                     let _ = send_event(
