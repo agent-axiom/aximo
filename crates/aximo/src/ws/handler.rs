@@ -1,4 +1,4 @@
-use aximo_core::ShortAudioRequest;
+use aximo_core::{PartialSchedule, SessionError, ShortAudioRequest};
 use axum::{
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
@@ -6,6 +6,8 @@ use axum::{
     },
     response::IntoResponse,
 };
+use futures_util::{SinkExt, StreamExt};
+use tokio::sync::mpsc;
 
 use crate::{
     app::AppState,
@@ -23,32 +25,40 @@ pub async fn realtime_socket(
     ws.on_upgrade(move |socket| handle_socket(socket, state))
 }
 
-async fn handle_socket(mut socket: WebSocket, state: AppState) {
+async fn handle_socket(socket: WebSocket, state: AppState) {
+    let (mut sender, mut receiver) = socket.split();
+    let (event_tx, mut event_rx) = mpsc::unbounded_channel::<ServerEvent>();
+    let writer = tokio::spawn(async move {
+        while let Some(event) = event_rx.recv().await {
+            let message = serde_json::to_string(&event).expect("serialize websocket event");
+            if sender.send(Message::Text(message.into())).await.is_err() {
+                break;
+            }
+        }
+    });
     let mut active_session_id: Option<String> = None;
 
-    while let Some(Ok(message)) = socket.recv().await {
+    while let Some(Ok(message)) = receiver.next().await {
         match message {
             Message::Text(text) => {
                 let Ok(client_event) = serde_json::from_str::<ClientEvent>(&text) else {
-                    let _ = send_event(
-                        &mut socket,
+                    queue_event(
+                        &event_tx,
                         ServerEvent::error("invalid_client_event", "failed to parse client event"),
-                    )
-                    .await;
+                    );
                     continue;
                 };
 
                 match client_event.event.as_str() {
                     "start" => {
                         if active_session_id.is_some() {
-                            let _ = send_event(
-                                &mut socket,
+                            queue_event(
+                                &event_tx,
                                 ServerEvent::error(
                                     "duplicate_start",
                                     "session already started for this socket",
                                 ),
-                            )
-                            .await;
+                            );
                             continue;
                         }
 
@@ -58,21 +68,16 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
                                     .session_manager
                                     .start_session(permit, state.realtime_session_limits);
                                 active_session_id = Some(session_id.clone());
-                                let _ = send_event(
-                                    &mut socket,
-                                    ServerEvent::session_started(session_id),
-                                )
-                                .await;
+                                queue_event(&event_tx, ServerEvent::session_started(session_id));
                             }
                             Err(_) => {
-                                let _ = send_event(
-                                    &mut socket,
+                                queue_event(
+                                    &event_tx,
                                     ServerEvent::error(
                                         "realtime_capacity_exhausted",
                                         "realtime session capacity exhausted",
                                     ),
-                                )
-                                .await;
+                                );
                             }
                         }
                     }
@@ -97,40 +102,33 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
                                 .await
                             {
                                 Ok(result) => {
-                                    let _ = send_event(
-                                        &mut socket,
-                                        ServerEvent::final_text(result.text),
-                                    )
-                                    .await;
+                                    queue_event(&event_tx, ServerEvent::final_text(result.text));
                                 }
                                 Err(error) => {
-                                    let _ = send_event(
-                                        &mut socket,
+                                    queue_event(
+                                        &event_tx,
                                         ServerEvent::error("inference_failed", error.to_string()),
-                                    )
-                                    .await;
+                                    );
                                 }
                             }
                         } else {
-                            let _ = send_event(
-                                &mut socket,
+                            queue_event(
+                                &event_tx,
                                 ServerEvent::error(
                                     "no_active_session",
                                     "stop requested without an active session",
                                 ),
-                            )
-                            .await;
+                            );
                         }
                     }
                     _ => {
-                        let _ = send_event(
-                            &mut socket,
+                        queue_event(
+                            &event_tx,
                             ServerEvent::error(
                                 "unsupported_client_event",
                                 format!("unsupported client event: {}", client_event.event),
                             ),
-                        )
-                        .await;
+                        );
                     }
                 }
             }
@@ -138,92 +136,57 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
                 if let Some(session_id) = active_session_id.as_deref() {
                     match state.session_manager.append_audio(session_id, &chunk) {
                         Ok(()) => {
-                            let should_schedule_partial = state
+                            let schedule = state
                                 .session_manager
-                                .should_schedule_partial(session_id, state.realtime_partial_limits)
-                                .unwrap_or(false);
+                                .maybe_begin_partial(session_id, state.realtime_partial_limits)
+                                .unwrap_or(PartialSchedule::Skip);
 
-                            if !should_schedule_partial {
-                                continue;
-                            }
-
-                            let _ = state.session_manager.mark_partial_started(session_id);
-                            let audio_bytes = state
-                                .session_manager
-                                .recent_audio_snapshot(session_id, REALTIME_PARTIAL_WINDOW_BYTES)
-                                .unwrap_or_default();
-                            let request = ShortAudioRequest {
-                                audio_bytes,
-                                content_type: "audio/pcm".to_string(),
-                                engine: None,
-                                language_hint: None,
-                                timestamps: false,
-                            };
-
-                            let _inference_permit =
-                                state.scheduler.acquire_realtime_inference().await;
-
-                            match run_blocking_inference(state.realtime_engine.clone(), request)
-                                .await
-                            {
-                                Ok(result) => {
-                                    let _ = send_event(
-                                        &mut socket,
-                                        ServerEvent::partial_text(result.text),
-                                    )
-                                    .await;
-                                }
-                                Err(error) => {
-                                    let _ = send_event(
-                                        &mut socket,
-                                        ServerEvent::error("inference_failed", error.to_string()),
-                                    )
-                                    .await;
-                                }
+                            if matches!(schedule, PartialSchedule::StartNow) {
+                                spawn_partial_inference(
+                                    state.clone(),
+                                    session_id.to_string(),
+                                    event_tx.clone(),
+                                );
                             }
                         }
-                        Err(aximo_core::SessionError::SessionTooLarge) => {
+                        Err(SessionError::SessionTooLarge) => {
                             cleanup_active_session(&state, &mut active_session_id);
-                            let _ = send_event(
-                                &mut socket,
+                            queue_event(
+                                &event_tx,
                                 ServerEvent::error(
                                     "realtime_session_too_large",
                                     "realtime session exceeded configured byte limit",
                                 ),
-                            )
-                            .await;
+                            );
                         }
-                        Err(aximo_core::SessionError::SessionTooLong) => {
+                        Err(SessionError::SessionTooLong) => {
                             cleanup_active_session(&state, &mut active_session_id);
-                            let _ = send_event(
-                                &mut socket,
+                            queue_event(
+                                &event_tx,
                                 ServerEvent::error(
                                     "realtime_session_too_long",
                                     "realtime session exceeded configured duration limit",
                                 ),
-                            )
-                            .await;
+                            );
                         }
-                        Err(aximo_core::SessionError::MissingSession) => {
-                            let _ = send_event(
-                                &mut socket,
+                        Err(SessionError::MissingSession) => {
+                            queue_event(
+                                &event_tx,
                                 ServerEvent::error(
                                     "audio_append_failed",
                                     "failed to append audio to the active realtime session",
                                 ),
-                            )
-                            .await;
+                            );
                         }
                     }
                 } else {
-                    let _ = send_event(
-                        &mut socket,
+                    queue_event(
+                        &event_tx,
                         ServerEvent::error(
                             "no_active_session",
                             "binary audio received before start",
                         ),
-                    )
-                    .await;
+                    );
                 }
             }
             Message::Close(_) => break,
@@ -232,11 +195,64 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
     }
 
     cleanup_active_session(&state, &mut active_session_id);
+    drop(event_tx);
+    writer.abort();
+    let _ = writer.await;
 }
 
-async fn send_event(socket: &mut WebSocket, event: ServerEvent) -> Result<(), axum::Error> {
-    let message = serde_json::to_string(&event).expect("serialize websocket event");
-    socket.send(Message::Text(message.into())).await
+fn spawn_partial_inference(
+    state: AppState,
+    session_id: String,
+    event_tx: mpsc::UnboundedSender<ServerEvent>,
+) {
+    tokio::spawn(async move {
+        loop {
+            let audio_bytes = match state
+                .session_manager
+                .recent_audio_snapshot(&session_id, REALTIME_PARTIAL_WINDOW_BYTES)
+            {
+                Ok(audio_bytes) => audio_bytes,
+                Err(SessionError::MissingSession) => break,
+                Err(SessionError::SessionTooLarge | SessionError::SessionTooLong) => break,
+            };
+            let request = ShortAudioRequest {
+                audio_bytes,
+                content_type: "audio/pcm".to_string(),
+                engine: None,
+                language_hint: None,
+                timestamps: false,
+            };
+
+            let _inference_permit = state.scheduler.acquire_realtime_inference().await;
+            let inference_result =
+                run_blocking_inference(state.realtime_engine.clone(), request).await;
+            let follow_up = match state.session_manager.complete_partial(&session_id) {
+                Ok(follow_up) => follow_up,
+                Err(SessionError::MissingSession) => break,
+                Err(SessionError::SessionTooLarge | SessionError::SessionTooLong) => break,
+            };
+
+            match inference_result {
+                Ok(result) => {
+                    queue_event(&event_tx, ServerEvent::partial_text(result.text));
+                }
+                Err(error) => {
+                    queue_event(
+                        &event_tx,
+                        ServerEvent::error("inference_failed", error.to_string()),
+                    );
+                }
+            }
+
+            if !matches!(follow_up, PartialSchedule::StartNow) {
+                break;
+            }
+        }
+    });
+}
+
+fn queue_event(event_tx: &mpsc::UnboundedSender<ServerEvent>, event: ServerEvent) {
+    let _ = event_tx.send(event);
 }
 
 fn cleanup_active_session(state: &AppState, active_session_id: &mut Option<String>) {

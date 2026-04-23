@@ -37,6 +37,8 @@ impl SessionManager {
                 limits,
                 last_partial_at: None,
                 bytes_since_partial: 0,
+                partial_inflight: false,
+                partial_dirty: false,
                 capacity_permit,
             },
         );
@@ -63,14 +65,14 @@ impl SessionManager {
         Ok(())
     }
 
-    pub fn should_schedule_partial(
+    pub fn maybe_begin_partial(
         &self,
         session_id: &str,
         limits: RealtimePartialLimits,
-    ) -> Result<bool, SessionError> {
-        let sessions = self.sessions.lock().expect("session manager lock");
+    ) -> Result<PartialSchedule, SessionError> {
+        let mut sessions = self.sessions.lock().expect("session manager lock");
         let session = sessions
-            .get(session_id)
+            .get_mut(session_id)
             .ok_or(SessionError::MissingSession)?;
 
         let enough_audio = session.bytes_since_partial >= limits.min_chunk_bytes.max(1);
@@ -79,18 +81,41 @@ impl SessionManager {
             .map(|last_partial_at| last_partial_at.elapsed() >= limits.min_interval)
             .unwrap_or(true);
 
-        Ok(enough_audio && enough_time)
+        if !enough_audio || !enough_time {
+            return Ok(PartialSchedule::Skip);
+        }
+
+        if session.partial_inflight {
+            session.partial_dirty = true;
+            return Ok(PartialSchedule::Skip);
+        }
+
+        session.partial_inflight = true;
+        session.partial_dirty = false;
+        session.last_partial_at = Some(Instant::now());
+        session.bytes_since_partial = 0;
+
+        Ok(PartialSchedule::StartNow)
     }
 
-    pub fn mark_partial_started(&self, session_id: &str) -> Result<(), SessionError> {
+    pub fn complete_partial(&self, session_id: &str) -> Result<PartialSchedule, SessionError> {
         let mut sessions = self.sessions.lock().expect("session manager lock");
         let session = sessions
             .get_mut(session_id)
             .ok_or(SessionError::MissingSession)?;
 
+        session.partial_inflight = false;
+
+        if !session.partial_dirty {
+            return Ok(PartialSchedule::Skip);
+        }
+
+        session.partial_inflight = true;
+        session.partial_dirty = false;
         session.last_partial_at = Some(Instant::now());
         session.bytes_since_partial = 0;
-        Ok(())
+
+        Ok(PartialSchedule::StartNow)
     }
 
     pub fn audio_snapshot(&self, session_id: &str) -> Result<Vec<u8>, SessionError> {
@@ -138,6 +163,12 @@ pub enum SessionError {
     SessionTooLong,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PartialSchedule {
+    Skip,
+    StartNow,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct RealtimeSessionLimits {
     pub max_bytes: usize,
@@ -159,6 +190,8 @@ struct RealtimeSession {
     limits: RealtimeSessionLimits,
     last_partial_at: Option<Instant>,
     bytes_since_partial: usize,
+    partial_inflight: bool,
+    partial_dirty: bool,
     #[allow(dead_code)]
     capacity_permit: OwnedSemaphorePermit,
 }

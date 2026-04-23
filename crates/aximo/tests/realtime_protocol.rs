@@ -85,6 +85,68 @@ impl aximo_inference::engine::SpeechEngine for BlockingEngine {
     }
 }
 
+struct BlockingRecordingEngine {
+    requests: Arc<Mutex<Vec<usize>>>,
+    call_count: AtomicUsize,
+    first_started_tx: Mutex<Option<oneshot::Sender<()>>>,
+    release_first_rx: Mutex<Option<mpsc::Receiver<()>>>,
+}
+
+type BlockingRecordingParts = (
+    BlockingRecordingEngine,
+    Arc<Mutex<Vec<usize>>>,
+    oneshot::Receiver<()>,
+    mpsc::Sender<()>,
+);
+
+impl BlockingRecordingEngine {
+    fn new() -> BlockingRecordingParts {
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let (first_started_tx, first_started_rx) = oneshot::channel();
+        let (release_first_tx, release_first_rx) = mpsc::channel();
+
+        (
+            Self {
+                requests: Arc::clone(&requests),
+                call_count: AtomicUsize::new(0),
+                first_started_tx: Mutex::new(Some(first_started_tx)),
+                release_first_rx: Mutex::new(Some(release_first_rx)),
+            },
+            requests,
+            first_started_rx,
+            release_first_tx,
+        )
+    }
+}
+
+impl aximo_inference::engine::SpeechEngine for BlockingRecordingEngine {
+    fn transcribe_short(
+        &self,
+        request: aximo_core::ShortAudioRequest,
+    ) -> Result<aximo_core::ShortAudioResult, aximo_inference::engine::InferenceError> {
+        self.requests
+            .lock()
+            .unwrap()
+            .push(request.audio_bytes.len());
+
+        let call_number = self.call_count.fetch_add(1, Ordering::SeqCst) + 1;
+        if call_number == 1 {
+            if let Some(tx) = self.first_started_tx.lock().unwrap().take() {
+                let _ = tx.send(());
+            }
+
+            if let Some(rx) = self.release_first_rx.lock().unwrap().take() {
+                let _ = rx.recv();
+            }
+        }
+
+        Ok(aximo_core::ShortAudioResult::new(
+            "recorded",
+            "blocking-recording",
+        ))
+    }
+}
+
 async fn spawn_test_server() -> (String, tokio::task::JoinHandle<()>) {
     let app = aximo::app::build_test_app().await;
     spawn_server_with_app(app).await
@@ -167,6 +229,42 @@ async fn websocket_session_returns_error_for_binary_before_start() {
     assert_eq!(event["event"], "error");
     assert_eq!(event["code"], "no_active_session");
     assert_eq!(event["reason"], "binary audio received before start");
+
+    server.abort();
+}
+
+#[tokio::test]
+async fn websocket_session_returns_error_for_stop_before_start() {
+    let (url, server) = spawn_test_server().await;
+    let (mut socket, _) = connect_async(url).await.unwrap();
+
+    socket
+        .send(Message::Text(r#"{"event":"stop"}"#.into()))
+        .await
+        .unwrap();
+
+    let event = next_event(&mut socket).await;
+    assert_eq!(event["event"], "error");
+    assert_eq!(event["code"], "no_active_session");
+    assert_eq!(event["reason"], "stop requested without an active session");
+
+    server.abort();
+}
+
+#[tokio::test]
+async fn websocket_session_returns_error_for_unsupported_client_event() {
+    let (url, server) = spawn_test_server().await;
+    let (mut socket, _) = connect_async(url).await.unwrap();
+
+    socket
+        .send(Message::Text(r#"{"event":"rewind"}"#.into()))
+        .await
+        .unwrap();
+
+    let event = next_event(&mut socket).await;
+    assert_eq!(event["event"], "error");
+    assert_eq!(event["code"], "unsupported_client_event");
+    assert_eq!(event["reason"], "unsupported client event: rewind");
 
     server.abort();
 }
@@ -263,23 +361,58 @@ async fn websocket_session_emits_partial_after_audio_chunk() {
         .send(Message::Text(r#"{"event":"start"}"#.into()))
         .await
         .unwrap();
+    let started = next_event(&mut socket).await;
+    assert_eq!(started["event"], "session_started");
+
     socket
         .send(Message::Binary(vec![0_u8; 3200].into()))
         .await
         .unwrap();
+    let partial = next_event(&mut socket).await;
+    assert_eq!(partial["event"], "partial");
+    assert_eq!(partial["text"], "hello world");
+
     socket
         .send(Message::Text(r#"{"event":"stop"}"#.into()))
         .await
         .unwrap();
-
-    let started = next_event(&mut socket).await;
-    let partial = next_event(&mut socket).await;
     let final_event = next_event(&mut socket).await;
 
-    assert_eq!(started["event"], "session_started");
-    assert_eq!(partial["event"], "partial");
-    assert_eq!(partial["text"], "hello world");
     assert_eq!(final_event["event"], "final");
+
+    server.abort();
+}
+
+#[tokio::test]
+async fn websocket_partial_emits_structured_error_when_engine_fails() {
+    let mut settings = aximo::config::Settings::default();
+    settings.limits.realtime_partial_min_chunk_bytes = 3_200;
+    let app = aximo::app::build_app(
+        settings,
+        Arc::new(aximo_inference::engine::FakeEngine),
+        Arc::new(aximo_inference::engine::UnavailableEngine::new(
+            "missing model",
+        )),
+    );
+    let (url, server) = spawn_server_with_app(app).await;
+    let (mut socket, _) = connect_async(url).await.unwrap();
+
+    socket
+        .send(Message::Text(r#"{"event":"start"}"#.into()))
+        .await
+        .unwrap();
+    let started = next_event(&mut socket).await;
+    assert_eq!(started["event"], "session_started");
+
+    socket
+        .send(Message::Binary(vec![0_u8; 3_200].into()))
+        .await
+        .unwrap();
+
+    let event = next_event(&mut socket).await;
+    assert_eq!(event["event"], "error");
+    assert_eq!(event["code"], "inference_failed");
+    assert_eq!(event["reason"], "speech engine unavailable: missing model");
 
     server.abort();
 }
@@ -623,6 +756,67 @@ async fn websocket_final_waits_for_realtime_inference_slot_instead_of_erroring()
 
     assert_eq!(first_partial["event"], "partial");
     assert_eq!(second_final["event"], "final");
+
+    server.abort();
+}
+
+#[tokio::test]
+async fn websocket_partial_uses_latest_wins_backpressure() {
+    let mut settings = aximo::config::Settings::default();
+    settings.limits.max_realtime_inferences = 1;
+    settings.limits.realtime_partial_min_interval_ms = 0;
+    settings.limits.realtime_partial_min_chunk_bytes = 3_200;
+    let (engine, request_lengths, first_started_rx, release_first_tx) =
+        BlockingRecordingEngine::new();
+    let app = aximo::app::build_app(
+        settings,
+        Arc::new(aximo_inference::engine::FakeEngine),
+        Arc::new(engine),
+    );
+    let (url, server) = spawn_server_with_app(app).await;
+    let (mut socket, _) = connect_async(url).await.unwrap();
+
+    socket
+        .send(Message::Text(r#"{"event":"start"}"#.into()))
+        .await
+        .unwrap();
+    let started = next_event(&mut socket).await;
+    assert_eq!(started["event"], "session_started");
+
+    socket
+        .send(Message::Binary(vec![1_u8; 3_200].into()))
+        .await
+        .unwrap();
+    first_started_rx.await.unwrap();
+
+    for byte in [2_u8, 3_u8, 4_u8] {
+        socket
+            .send(Message::Binary(vec![byte; 3_200].into()))
+            .await
+            .unwrap();
+    }
+
+    assert!(timeout(Duration::from_millis(100), next_event(&mut socket))
+        .await
+        .is_err());
+
+    release_first_tx.send(()).unwrap();
+
+    let first_partial = timeout(Duration::from_secs(1), next_event(&mut socket))
+        .await
+        .unwrap();
+    let second_partial = timeout(Duration::from_secs(1), next_event(&mut socket))
+        .await
+        .unwrap();
+
+    assert_eq!(first_partial["event"], "partial");
+    assert_eq!(second_partial["event"], "partial");
+    assert!(timeout(Duration::from_millis(150), next_event(&mut socket))
+        .await
+        .is_err());
+
+    let lengths = request_lengths.lock().unwrap().clone();
+    assert_eq!(lengths, vec![3_200, 12_800]);
 
     server.abort();
 }
