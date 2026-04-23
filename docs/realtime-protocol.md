@@ -16,6 +16,7 @@ The realtime API is exposed at `GET /v1/realtime` via WebSocket.
 - `error`
 
 `partial` is best-effort and currently decoded from a bounded rolling recent window of the session audio. Both `partial` and `final` wait for the realtime inference slot instead of being dropped when the engine is busy.
+`error` carries machine-readable `code` and human-readable `reason`.
 
 ## Example Session
 
@@ -41,6 +42,10 @@ binary audio chunk
 {"event":"final","text":"..."}
 ```
 
+```json
+{"event":"error","code":"invalid_client_event","reason":"failed to parse client event"}
+```
+
 ## Error Cases
 
 - invalid JSON control frame
@@ -48,5 +53,6 @@ binary audio chunk
 - `stop` before `start`
 - repeated `start` while a session is already active on the same socket
 - realtime capacity exhausted
+- inference failure while producing `partial` or `final`
 
-All of the above currently return a server event with `{"event":"error"}`.
+All of the above return a server event with `{"event":"error","code":"...","reason":"..."}`.

@@ -147,6 +147,8 @@ async fn websocket_session_returns_error_for_invalid_json() {
 
     let event = next_event(&mut socket).await;
     assert_eq!(event["event"], "error");
+    assert_eq!(event["code"], "invalid_client_event");
+    assert_eq!(event["reason"], "failed to parse client event");
 
     server.abort();
 }
@@ -163,6 +165,8 @@ async fn websocket_session_returns_error_for_binary_before_start() {
 
     let event = next_event(&mut socket).await;
     assert_eq!(event["event"], "error");
+    assert_eq!(event["code"], "no_active_session");
+    assert_eq!(event["reason"], "binary audio received before start");
 
     server.abort();
 }
@@ -194,6 +198,11 @@ async fn websocket_session_returns_error_when_capacity_is_exhausted() {
 
     assert_eq!(first_event["event"], "session_started");
     assert_eq!(second_event["event"], "error");
+    assert_eq!(second_event["code"], "realtime_capacity_exhausted");
+    assert_eq!(
+        second_event["reason"],
+        "realtime session capacity exhausted"
+    );
 
     server.abort();
 }
@@ -288,6 +297,11 @@ async fn websocket_rejects_duplicate_start_without_leaking_capacity() {
         .unwrap();
     let duplicate_start = next_event(&mut first_socket).await;
     assert_eq!(duplicate_start["event"], "error");
+    assert_eq!(duplicate_start["code"], "duplicate_start");
+    assert_eq!(
+        duplicate_start["reason"],
+        "session already started for this socket"
+    );
 
     first_socket
         .send(Message::Text(r#"{"event":"stop"}"#.into()))

@@ -30,14 +30,25 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
         match message {
             Message::Text(text) => {
                 let Ok(client_event) = serde_json::from_str::<ClientEvent>(&text) else {
-                    let _ = send_event(&mut socket, ServerEvent::error()).await;
+                    let _ = send_event(
+                        &mut socket,
+                        ServerEvent::error("invalid_client_event", "failed to parse client event"),
+                    )
+                    .await;
                     continue;
                 };
 
                 match client_event.event.as_str() {
                     "start" => {
                         if active_session_id.is_some() {
-                            let _ = send_event(&mut socket, ServerEvent::error()).await;
+                            let _ = send_event(
+                                &mut socket,
+                                ServerEvent::error(
+                                    "duplicate_start",
+                                    "session already started for this socket",
+                                ),
+                            )
+                            .await;
                             continue;
                         }
 
@@ -52,7 +63,14 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
                                 .await;
                             }
                             Err(_) => {
-                                let _ = send_event(&mut socket, ServerEvent::error()).await;
+                                let _ = send_event(
+                                    &mut socket,
+                                    ServerEvent::error(
+                                        "realtime_capacity_exhausted",
+                                        "realtime session capacity exhausted",
+                                    ),
+                                )
+                                .await;
                             }
                         }
                     }
@@ -83,16 +101,34 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
                                     )
                                     .await;
                                 }
-                                Err(_) => {
-                                    let _ = send_event(&mut socket, ServerEvent::error()).await;
+                                Err(error) => {
+                                    let _ = send_event(
+                                        &mut socket,
+                                        ServerEvent::error("inference_failed", error.to_string()),
+                                    )
+                                    .await;
                                 }
                             }
                         } else {
-                            let _ = send_event(&mut socket, ServerEvent::error()).await;
+                            let _ = send_event(
+                                &mut socket,
+                                ServerEvent::error(
+                                    "no_active_session",
+                                    "stop requested without an active session",
+                                ),
+                            )
+                            .await;
                         }
                     }
                     _ => {
-                        let _ = send_event(&mut socket, ServerEvent::error()).await;
+                        let _ = send_event(
+                            &mut socket,
+                            ServerEvent::error(
+                                "unsupported_client_event",
+                                format!("unsupported client event: {}", client_event.event),
+                            ),
+                        )
+                        .await;
                     }
                 }
             }
@@ -123,13 +159,33 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
                                     send_event(&mut socket, ServerEvent::partial_text(result.text))
                                         .await;
                             }
-                            Err(_) => {
-                                let _ = send_event(&mut socket, ServerEvent::error()).await;
+                            Err(error) => {
+                                let _ = send_event(
+                                    &mut socket,
+                                    ServerEvent::error("inference_failed", error.to_string()),
+                                )
+                                .await;
                             }
                         }
+                    } else {
+                        let _ = send_event(
+                            &mut socket,
+                            ServerEvent::error(
+                                "audio_append_failed",
+                                "failed to append audio to the active realtime session",
+                            ),
+                        )
+                        .await;
                     }
                 } else {
-                    let _ = send_event(&mut socket, ServerEvent::error()).await;
+                    let _ = send_event(
+                        &mut socket,
+                        ServerEvent::error(
+                            "no_active_session",
+                            "binary audio received before start",
+                        ),
+                    )
+                    .await;
                 }
             }
             Message::Close(_) => break,

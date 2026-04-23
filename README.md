@@ -106,6 +106,15 @@ Example response:
 
 `detected_language` is `null` when the current engine integration does not expose language detection. `segments` stays empty when segmentation or timestamps are unavailable. `duration_ms` and `processing_ms` are measured values and vary per request.
 
+Error responses from `POST /v1/transcriptions` are structured JSON:
+
+```json
+{
+  "code": "invalid_audio",
+  "message": "invalid audio payload: pcm payload must be aligned to 16-bit samples"
+}
+```
+
 ## Realtime Example
 
 Realtime uses WebSocket and raw `pcm_s16le`, `16 kHz`, mono binary chunks.
@@ -136,6 +145,16 @@ Expected server events:
 - `partial`
 - `final`
 - `error`
+
+`error` events now include machine-readable `code` and human-readable `reason`, for example:
+
+```json
+{
+  "event": "error",
+  "code": "realtime_capacity_exhausted",
+  "reason": "realtime session capacity exhausted"
+}
+```
 
 ## API Docs
 

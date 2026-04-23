@@ -24,6 +24,7 @@ const RECORDER_STYLES: &str = include_str!("../static/docs/aximo-recorder.css");
         schemas(
             AudioBinaryBodyDoc,
             ClientEventDoc,
+            ErrorResponseDoc,
             ServerEventDoc,
             ShortAudioResultDoc,
             TranscriptSegmentDoc
@@ -48,6 +49,14 @@ struct ApiDoc;
     format = Binary
 )]
 struct AudioBinaryBodyDoc(Vec<u8>);
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+struct ErrorResponseDoc {
+    /// Stable machine-readable error code.
+    code: String,
+    /// Human-readable error message.
+    message: String,
+}
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 struct ShortAudioResultDoc {
@@ -89,6 +98,10 @@ struct ServerEventDoc {
     session_id: Option<String>,
     #[schema(nullable)]
     text: Option<String>,
+    #[schema(nullable)]
+    code: Option<String>,
+    #[schema(nullable)]
+    reason: Option<String>,
 }
 
 #[utoipa::path(
@@ -111,8 +124,10 @@ fn health_ready_doc() {}
     ),
     responses(
         (status = 200, description = "Transcription completed", body = ShortAudioResultDoc),
-        (status = 429, description = "Short-audio concurrency limit exceeded"),
-        (status = 503, description = "Inference engine is unavailable")
+        (status = 400, description = "Client supplied invalid audio or engine selection", body = ErrorResponseDoc),
+        (status = 429, description = "Short-audio request or inference concurrency limit exceeded", body = ErrorResponseDoc),
+        (status = 500, description = "Inference runtime failed inside the service", body = ErrorResponseDoc),
+        (status = 503, description = "Inference engine is unavailable", body = ErrorResponseDoc)
     )
 )]
 #[allow(dead_code)]
@@ -125,7 +140,7 @@ fn transcribe_short_doc() {}
     responses(
         (
             status = 101,
-            description = "WebSocket upgraded. Send {\"event\":\"start\"}, then raw pcm_s16le 16 kHz mono binary chunks, then {\"event\":\"stop\"}. Server emits session_started, partial, final, and error events."
+            description = "WebSocket upgraded. Send {\"event\":\"start\"}, then raw pcm_s16le 16 kHz mono binary chunks, then {\"event\":\"stop\"}. Server emits session_started, partial, final, and error events. Error events include machine-readable code and human-readable reason."
         )
     )
 )]

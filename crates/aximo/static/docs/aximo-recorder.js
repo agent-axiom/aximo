@@ -217,7 +217,22 @@ class AximoDocsRecorder {
     const text = await response.text();
 
     if (!response.ok) {
-      throw new Error(`Short Audio request failed: ${response.status} ${text}`);
+      let message = `Short Audio request failed: ${response.status}`;
+
+      try {
+        const payload = JSON.parse(text);
+        if (payload.code && payload.message) {
+          message = `Short Audio request failed: ${response.status} ${payload.code}: ${payload.message}`;
+        } else if (text) {
+          message = `Short Audio request failed: ${response.status} ${text}`;
+        }
+      } catch (_error) {
+        if (text) {
+          message = `Short Audio request failed: ${response.status} ${text}`;
+        }
+      }
+
+      throw new Error(message);
     }
 
     const payload = JSON.parse(text);
@@ -328,7 +343,11 @@ class AximoDocsRecorder {
         }
         break;
       case "error":
-        this.setStatus("Realtime endpoint returned an error event.");
+        this.setStatus(
+          payload.code && payload.reason
+            ? `Realtime error: ${payload.code}: ${payload.reason}`
+            : "Realtime endpoint returned an error event.",
+        );
         this.renderRealtimeResult();
         if (this.stopResolver) {
           this.stopResolver();

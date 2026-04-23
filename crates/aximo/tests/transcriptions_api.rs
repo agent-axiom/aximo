@@ -3,9 +3,81 @@ use axum::{
     http::{Request, StatusCode},
 };
 use std::sync::Arc;
+use std::sync::{mpsc, Mutex};
+use tokio::sync::oneshot;
 
 use serde_json::Value;
 use tower::ServiceExt;
+
+struct BlockingEngine {
+    started_tx: Mutex<Option<oneshot::Sender<()>>>,
+    release_rx: Mutex<Option<mpsc::Receiver<()>>>,
+}
+
+impl BlockingEngine {
+    fn new() -> (Self, oneshot::Receiver<()>, mpsc::Sender<()>) {
+        let (started_tx, started_rx) = oneshot::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+
+        (
+            Self {
+                started_tx: Mutex::new(Some(started_tx)),
+                release_rx: Mutex::new(Some(release_rx)),
+            },
+            started_rx,
+            release_tx,
+        )
+    }
+}
+
+impl aximo_inference::engine::SpeechEngine for BlockingEngine {
+    fn transcribe_short(
+        &self,
+        _request: aximo_core::ShortAudioRequest,
+    ) -> Result<aximo_core::ShortAudioResult, aximo_inference::engine::InferenceError> {
+        if let Some(tx) = self.started_tx.lock().unwrap().take() {
+            let _ = tx.send(());
+        }
+
+        if let Some(rx) = self.release_rx.lock().unwrap().take() {
+            let _ = rx.recv();
+        }
+
+        Ok(aximo_core::ShortAudioResult::new("done", "blocking"))
+    }
+}
+
+struct StaticErrorEngine {
+    error: aximo_inference::engine::InferenceError,
+}
+
+impl StaticErrorEngine {
+    fn new(error: aximo_inference::engine::InferenceError) -> Self {
+        Self { error }
+    }
+}
+
+impl aximo_inference::engine::SpeechEngine for StaticErrorEngine {
+    fn transcribe_short(
+        &self,
+        _request: aximo_core::ShortAudioRequest,
+    ) -> Result<aximo_core::ShortAudioResult, aximo_inference::engine::InferenceError> {
+        Err(match &self.error {
+            aximo_inference::engine::InferenceError::Unavailable(message) => {
+                aximo_inference::engine::InferenceError::Unavailable(message.clone())
+            }
+            aximo_inference::engine::InferenceError::UnsupportedEngine(message) => {
+                aximo_inference::engine::InferenceError::UnsupportedEngine(message.clone())
+            }
+            aximo_inference::engine::InferenceError::InvalidAudio(message) => {
+                aximo_inference::engine::InferenceError::InvalidAudio(message.clone())
+            }
+            aximo_inference::engine::InferenceError::Runtime(message) => {
+                aximo_inference::engine::InferenceError::Runtime(message.clone())
+            }
+        })
+    }
+}
 
 #[tokio::test]
 async fn transcription_endpoint_returns_fake_engine_result() {
@@ -54,4 +126,217 @@ async fn transcription_endpoint_returns_service_unavailable_when_engine_fails() 
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let json: Value = serde_json::from_slice(&body).unwrap();
+
+    assert_eq!(json["code"], "engine_unavailable");
+    assert_eq!(
+        json["message"],
+        "speech engine unavailable: offline unavailable"
+    );
+}
+
+#[tokio::test]
+async fn transcription_endpoint_returns_structured_capacity_error() {
+    let mut settings = aximo::config::Settings::default();
+    settings.limits.max_short_audio_requests = 1;
+    let (engine, started_rx, release_tx) = BlockingEngine::new();
+    let app = aximo::app::build_app(
+        settings,
+        Arc::new(engine),
+        Arc::new(aximo_inference::engine::FakeEngine),
+    );
+
+    let first_request = Request::builder()
+        .method("POST")
+        .uri("/v1/transcriptions")
+        .header("content-type", "audio/wav")
+        .body(Body::from(vec![0_u8; 3200]))
+        .unwrap();
+    let second_request = Request::builder()
+        .method("POST")
+        .uri("/v1/transcriptions")
+        .header("content-type", "audio/wav")
+        .body(Body::from(vec![0_u8; 3200]))
+        .unwrap();
+
+    let app_for_first = app.clone();
+    let first_handle =
+        tokio::spawn(async move { app_for_first.oneshot(first_request).await.unwrap() });
+
+    started_rx.await.unwrap();
+
+    let second_response = app.oneshot(second_request).await.unwrap();
+    assert_eq!(second_response.status(), StatusCode::TOO_MANY_REQUESTS);
+
+    let second_body = to_bytes(second_response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let second_json: Value = serde_json::from_slice(&second_body).unwrap();
+    assert_eq!(
+        second_json["code"],
+        "short_audio_request_capacity_exhausted"
+    );
+    assert_eq!(
+        second_json["message"],
+        "short-audio request capacity exhausted"
+    );
+
+    release_tx.send(()).unwrap();
+
+    let first_response = first_handle.await.unwrap();
+    assert_eq!(first_response.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn transcription_endpoint_returns_structured_inference_capacity_error() {
+    let mut settings = aximo::config::Settings::default();
+    settings.limits.max_short_inferences = 1;
+    let (engine, started_rx, release_tx) = BlockingEngine::new();
+    let app = aximo::app::build_app(
+        settings,
+        Arc::new(engine),
+        Arc::new(aximo_inference::engine::FakeEngine),
+    );
+
+    let first_request = Request::builder()
+        .method("POST")
+        .uri("/v1/transcriptions")
+        .header("content-type", "audio/wav")
+        .body(Body::from(vec![0_u8; 3200]))
+        .unwrap();
+    let second_request = Request::builder()
+        .method("POST")
+        .uri("/v1/transcriptions")
+        .header("content-type", "audio/wav")
+        .body(Body::from(vec![0_u8; 3200]))
+        .unwrap();
+
+    let app_for_first = app.clone();
+    let first_handle =
+        tokio::spawn(async move { app_for_first.oneshot(first_request).await.unwrap() });
+
+    started_rx.await.unwrap();
+
+    let second_response = app.oneshot(second_request).await.unwrap();
+    assert_eq!(second_response.status(), StatusCode::TOO_MANY_REQUESTS);
+
+    let second_body = to_bytes(second_response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let second_json: Value = serde_json::from_slice(&second_body).unwrap();
+    assert_eq!(
+        second_json["code"],
+        "short_audio_inference_capacity_exhausted"
+    );
+    assert_eq!(
+        second_json["message"],
+        "short-audio inference capacity exhausted"
+    );
+
+    release_tx.send(()).unwrap();
+
+    let first_response = first_handle.await.unwrap();
+    assert_eq!(first_response.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn transcription_endpoint_returns_bad_request_for_invalid_audio() {
+    let app = aximo::app::build_app(
+        aximo::config::Settings::default(),
+        Arc::new(StaticErrorEngine::new(
+            aximo_inference::engine::InferenceError::InvalidAudio(
+                "pcm payload must be aligned to 16-bit samples".to_string(),
+            ),
+        )),
+        Arc::new(aximo_inference::engine::FakeEngine),
+    );
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/transcriptions")
+                .header("content-type", "audio/pcm")
+                .body(Body::from(vec![1_u8, 2, 3]))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let json: Value = serde_json::from_slice(&body).unwrap();
+
+    assert_eq!(json["code"], "invalid_audio");
+    assert_eq!(
+        json["message"],
+        "invalid audio payload: pcm payload must be aligned to 16-bit samples"
+    );
+}
+
+#[tokio::test]
+async fn transcription_endpoint_returns_bad_request_for_unsupported_engine() {
+    let app = aximo::app::build_app(
+        aximo::config::Settings::default(),
+        Arc::new(StaticErrorEngine::new(
+            aximo_inference::engine::InferenceError::UnsupportedEngine("moonshine".to_string()),
+        )),
+        Arc::new(aximo_inference::engine::FakeEngine),
+    );
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/transcriptions")
+                .header("content-type", "audio/wav")
+                .body(Body::from(vec![0_u8; 3200]))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let json: Value = serde_json::from_slice(&body).unwrap();
+
+    assert_eq!(json["code"], "unsupported_engine");
+    assert_eq!(json["message"], "unsupported engine: moonshine");
+}
+
+#[tokio::test]
+async fn transcription_endpoint_returns_internal_error_for_runtime_failure() {
+    let app = aximo::app::build_app(
+        aximo::config::Settings::default(),
+        Arc::new(StaticErrorEngine::new(
+            aximo_inference::engine::InferenceError::Runtime(
+                "blocking inference task failed".to_string(),
+            ),
+        )),
+        Arc::new(aximo_inference::engine::FakeEngine),
+    );
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/transcriptions")
+                .header("content-type", "audio/wav")
+                .body(Body::from(vec![0_u8; 3200]))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let json: Value = serde_json::from_slice(&body).unwrap();
+
+    assert_eq!(json["code"], "inference_runtime_error");
+    assert_eq!(
+        json["message"],
+        "runtime inference error: blocking inference task failed"
+    );
 }

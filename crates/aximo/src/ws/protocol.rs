@@ -12,6 +12,10 @@ pub struct ServerEvent {
     pub session_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
 }
 
 impl ServerEvent {
@@ -20,6 +24,8 @@ impl ServerEvent {
             event: "session_started".to_string(),
             session_id: Some(session_id),
             text: None,
+            code: None,
+            reason: None,
         }
     }
 
@@ -28,6 +34,8 @@ impl ServerEvent {
             event: "final".to_string(),
             session_id: None,
             text: Some(text.into()),
+            code: None,
+            reason: None,
         }
     }
 
@@ -36,14 +44,18 @@ impl ServerEvent {
             event: "partial".to_string(),
             session_id: None,
             text: Some(text.into()),
+            code: None,
+            reason: None,
         }
     }
 
-    pub fn error() -> Self {
+    pub fn error(code: impl Into<String>, reason: impl Into<String>) -> Self {
         Self {
             event: "error".to_string(),
             session_id: None,
             text: None,
+            code: Some(code.into()),
+            reason: Some(reason.into()),
         }
     }
 }
