@@ -22,3 +22,5 @@ max_short_inferences = 1
 max_realtime_inferences = 1
 max_realtime_session_bytes = 1920000
 max_realtime_session_duration_ms = 60000
+realtime_partial_min_interval_ms = 300
+realtime_partial_min_chunk_bytes = 9600

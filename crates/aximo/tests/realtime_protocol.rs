@@ -249,7 +249,14 @@ async fn websocket_session_rejects_audio_after_session_limit() {
 
 #[tokio::test]
 async fn websocket_session_emits_partial_after_audio_chunk() {
-    let (url, server) = spawn_test_server().await;
+    let mut settings = aximo::config::Settings::default();
+    settings.limits.realtime_partial_min_chunk_bytes = 3_200;
+    let app = aximo::app::build_app(
+        settings,
+        Arc::new(aximo_inference::engine::FakeEngine),
+        Arc::new(aximo_inference::engine::FakeEngine),
+    );
+    let (url, server) = spawn_server_with_app(app).await;
     let (mut socket, _) = connect_async(url).await.unwrap();
 
     socket
@@ -273,6 +280,83 @@ async fn websocket_session_emits_partial_after_audio_chunk() {
     assert_eq!(partial["event"], "partial");
     assert_eq!(partial["text"], "hello world");
     assert_eq!(final_event["event"], "final");
+
+    server.abort();
+}
+
+#[tokio::test]
+async fn websocket_partial_is_debounced_by_interval() {
+    let mut settings = aximo::config::Settings::default();
+    settings.limits.realtime_partial_min_interval_ms = 10_000;
+    settings.limits.realtime_partial_min_chunk_bytes = 3_200;
+    let app = aximo::app::build_app(
+        settings,
+        Arc::new(aximo_inference::engine::FakeEngine),
+        Arc::new(aximo_inference::engine::FakeEngine),
+    );
+    let (url, server) = spawn_server_with_app(app).await;
+    let (mut socket, _) = connect_async(url).await.unwrap();
+
+    socket
+        .send(Message::Text(r#"{"event":"start"}"#.into()))
+        .await
+        .unwrap();
+    let started = next_event(&mut socket).await;
+    assert_eq!(started["event"], "session_started");
+
+    for _ in 0..3 {
+        socket
+            .send(Message::Binary(vec![0_u8; 3_200].into()))
+            .await
+            .unwrap();
+    }
+
+    let partial = next_event(&mut socket).await;
+    assert_eq!(partial["event"], "partial");
+
+    assert!(timeout(Duration::from_millis(150), next_event(&mut socket))
+        .await
+        .is_err());
+
+    server.abort();
+}
+
+#[tokio::test]
+async fn websocket_partial_waits_for_minimum_audio_budget() {
+    let mut settings = aximo::config::Settings::default();
+    settings.limits.realtime_partial_min_interval_ms = 0;
+    settings.limits.realtime_partial_min_chunk_bytes = 6_400;
+    let app = aximo::app::build_app(
+        settings,
+        Arc::new(aximo_inference::engine::FakeEngine),
+        Arc::new(aximo_inference::engine::FakeEngine),
+    );
+    let (url, server) = spawn_server_with_app(app).await;
+    let (mut socket, _) = connect_async(url).await.unwrap();
+
+    socket
+        .send(Message::Text(r#"{"event":"start"}"#.into()))
+        .await
+        .unwrap();
+    let started = next_event(&mut socket).await;
+    assert_eq!(started["event"], "session_started");
+
+    socket
+        .send(Message::Binary(vec![0_u8; 3_200].into()))
+        .await
+        .unwrap();
+
+    assert!(timeout(Duration::from_millis(150), next_event(&mut socket))
+        .await
+        .is_err());
+
+    socket
+        .send(Message::Binary(vec![0_u8; 3_200].into()))
+        .await
+        .unwrap();
+
+    let partial = next_event(&mut socket).await;
+    assert_eq!(partial["event"], "partial");
 
     server.abort();
 }
@@ -373,7 +457,8 @@ async fn websocket_rejects_duplicate_start_without_leaking_capacity() {
 
 #[tokio::test]
 async fn websocket_partial_transcription_uses_bounded_rolling_window() {
-    let settings = aximo::config::Settings::default();
+    let mut settings = aximo::config::Settings::default();
+    settings.limits.realtime_partial_min_interval_ms = 0;
     let (engine, request_lengths) = RecordingEngine::new();
     let app = aximo::app::build_app(
         settings,
@@ -423,6 +508,7 @@ async fn websocket_partial_waits_for_realtime_inference_slot_instead_of_skipping
     let mut settings = aximo::config::Settings::default();
     settings.limits.max_realtime_sessions = 2;
     settings.limits.max_realtime_inferences = 1;
+    settings.limits.realtime_partial_min_chunk_bytes = 3_200;
     let (engine, first_started_rx, release_first_tx) = BlockingEngine::new();
     let app = aximo::app::build_app(
         settings,
@@ -484,6 +570,7 @@ async fn websocket_final_waits_for_realtime_inference_slot_instead_of_erroring()
     let mut settings = aximo::config::Settings::default();
     settings.limits.max_realtime_sessions = 2;
     settings.limits.max_realtime_inferences = 1;
+    settings.limits.realtime_partial_min_chunk_bytes = 3_200;
     let (engine, first_started_rx, release_first_tx) = BlockingEngine::new();
     let app = aximo::app::build_app(
         settings,

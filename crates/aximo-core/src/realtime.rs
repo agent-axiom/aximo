@@ -35,6 +35,8 @@ impl SessionManager {
                 audio_bytes: Vec::new(),
                 started_at: Instant::now(),
                 limits,
+                last_partial_at: None,
+                bytes_since_partial: 0,
                 capacity_permit,
             },
         );
@@ -57,6 +59,37 @@ impl SessionManager {
         }
 
         session.audio_bytes.extend_from_slice(chunk);
+        session.bytes_since_partial = session.bytes_since_partial.saturating_add(chunk.len());
+        Ok(())
+    }
+
+    pub fn should_schedule_partial(
+        &self,
+        session_id: &str,
+        limits: RealtimePartialLimits,
+    ) -> Result<bool, SessionError> {
+        let sessions = self.sessions.lock().expect("session manager lock");
+        let session = sessions
+            .get(session_id)
+            .ok_or(SessionError::MissingSession)?;
+
+        let enough_audio = session.bytes_since_partial >= limits.min_chunk_bytes.max(1);
+        let enough_time = session
+            .last_partial_at
+            .map(|last_partial_at| last_partial_at.elapsed() >= limits.min_interval)
+            .unwrap_or(true);
+
+        Ok(enough_audio && enough_time)
+    }
+
+    pub fn mark_partial_started(&self, session_id: &str) -> Result<(), SessionError> {
+        let mut sessions = self.sessions.lock().expect("session manager lock");
+        let session = sessions
+            .get_mut(session_id)
+            .ok_or(SessionError::MissingSession)?;
+
+        session.last_partial_at = Some(Instant::now());
+        session.bytes_since_partial = 0;
         Ok(())
     }
 
@@ -111,6 +144,12 @@ pub struct RealtimeSessionLimits {
     pub max_duration: Duration,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct RealtimePartialLimits {
+    pub min_interval: Duration,
+    pub min_chunk_bytes: usize,
+}
+
 #[derive(Debug)]
 struct RealtimeSession {
     #[allow(dead_code)]
@@ -118,6 +157,8 @@ struct RealtimeSession {
     audio_bytes: Vec<u8>,
     started_at: Instant,
     limits: RealtimeSessionLimits,
+    last_partial_at: Option<Instant>,
+    bytes_since_partial: usize,
     #[allow(dead_code)]
     capacity_permit: OwnedSemaphorePermit,
 }

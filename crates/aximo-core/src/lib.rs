@@ -2,6 +2,6 @@ mod realtime;
 mod scheduler;
 mod short_audio;
 
-pub use realtime::{RealtimeSessionLimits, SessionError, SessionManager};
+pub use realtime::{RealtimePartialLimits, RealtimeSessionLimits, SessionError, SessionManager};
 pub use scheduler::{CapacityError, Scheduler};
 pub use short_audio::{ShortAudioRequest, ShortAudioResult, TranscriptSegment};

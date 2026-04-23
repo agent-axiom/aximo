@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use aximo_core::{RealtimeSessionLimits, Scheduler, SessionManager};
+use aximo_core::{RealtimePartialLimits, RealtimeSessionLimits, Scheduler, SessionManager};
 use aximo_inference::engine::{FakeEngine, SpeechEngine};
 use axum::Router;
 
@@ -13,6 +13,7 @@ pub struct AppState {
     pub session_manager: SessionManager,
     pub scheduler: Scheduler,
     pub realtime_session_limits: RealtimeSessionLimits,
+    pub realtime_partial_limits: RealtimePartialLimits,
 }
 
 pub fn build_app(
@@ -35,6 +36,12 @@ pub fn build_app(
             max_duration: std::time::Duration::from_millis(
                 settings.limits.max_realtime_session_duration_ms,
             ),
+        },
+        realtime_partial_limits: RealtimePartialLimits {
+            min_interval: std::time::Duration::from_millis(
+                settings.limits.realtime_partial_min_interval_ms,
+            ),
+            min_chunk_bytes: settings.limits.realtime_partial_min_chunk_bytes,
         },
     };
 

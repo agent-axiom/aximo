@@ -138,6 +138,16 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
                 if let Some(session_id) = active_session_id.as_deref() {
                     match state.session_manager.append_audio(session_id, &chunk) {
                         Ok(()) => {
+                            let should_schedule_partial = state
+                                .session_manager
+                                .should_schedule_partial(session_id, state.realtime_partial_limits)
+                                .unwrap_or(false);
+
+                            if !should_schedule_partial {
+                                continue;
+                            }
+
+                            let _ = state.session_manager.mark_partial_started(session_id);
                             let audio_bytes = state
                                 .session_manager
                                 .recent_audio_snapshot(session_id, REALTIME_PARTIAL_WINDOW_BYTES)
