@@ -56,6 +56,12 @@ impl ShutdownHandle {
     }
 }
 
+impl Default for ShutdownHandle {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub fn build_app(
     settings: Settings,
     offline_engine: Arc<dyn SpeechEngine>,
