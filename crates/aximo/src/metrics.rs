@@ -446,6 +446,39 @@ pub async fn metrics(State(state): State<AppState>) -> Response {
         readiness.consecutive_failures
     )
     .expect("write metrics");
+    writeln!(
+        body,
+        "# HELP aximo_runtime_component_degraded Runtime readiness degraded state by component."
+    )
+    .expect("write metrics");
+    writeln!(body, "# TYPE aximo_runtime_component_degraded gauge").expect("write metrics");
+    for component in &readiness.components {
+        writeln!(
+            body,
+            "aximo_runtime_component_degraded{{component=\"{}\"}} {}",
+            component.component,
+            u8::from(component.status == "degraded")
+        )
+        .expect("write metrics");
+    }
+    writeln!(
+        body,
+        "# HELP aximo_runtime_component_consecutive_failures Consecutive runtime inference failures by component."
+    )
+    .expect("write metrics");
+    writeln!(
+        body,
+        "# TYPE aximo_runtime_component_consecutive_failures gauge"
+    )
+    .expect("write metrics");
+    for component in &readiness.components {
+        writeln!(
+            body,
+            "aximo_runtime_component_consecutive_failures{{component=\"{}\"}} {}",
+            component.component, component.consecutive_failures
+        )
+        .expect("write metrics");
+    }
 
     (
         [(

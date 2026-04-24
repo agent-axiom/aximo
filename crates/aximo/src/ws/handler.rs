@@ -122,6 +122,8 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                             let wait_elapsed = wait_started_at.elapsed();
 
                             let inference_started_at = Instant::now();
+                            let health_component =
+                                format!("realtime_final:{}", state.realtime_engine_name);
                             match run_observed_blocking_inference_with_timeout(
                                 state.realtime_engine.clone(),
                                 request,
@@ -132,7 +134,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                             .await
                             {
                                 Ok(result) => {
-                                    state.runtime_health.record_success();
+                                    state.runtime_health.record_success(health_component);
                                     state.metrics.record_inference(
                                         "realtime_final",
                                         wait_elapsed,
@@ -142,7 +144,12 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                                     queue_or_break!(ServerEvent::final_text(result.text));
                                 }
                                 Err(error) => {
-                                    record_inference_health(&state, "realtime_final", &error);
+                                    record_inference_health(
+                                        &state,
+                                        &health_component,
+                                        "realtime_final",
+                                        &error,
+                                    );
                                     state.metrics.record_inference(
                                         "realtime_final",
                                         wait_elapsed,
@@ -270,6 +277,7 @@ fn spawn_partial_inference(
             };
 
             let inference_started_at = Instant::now();
+            let health_component = format!("realtime_partial:{}", state.realtime_engine_name);
             let inference_result = run_observed_blocking_inference_with_timeout(
                 state.realtime_engine.clone(),
                 request,
@@ -296,7 +304,7 @@ fn spawn_partial_inference(
 
             match inference_result {
                 Ok(result) => {
-                    state.runtime_health.record_success();
+                    state.runtime_health.record_success(health_component);
                     if !queue_event_or_overflow(
                         &state,
                         &event_tx,
@@ -308,7 +316,7 @@ fn spawn_partial_inference(
                     }
                 }
                 Err(error) => {
-                    record_inference_health(&state, "realtime_partial", &error);
+                    record_inference_health(&state, &health_component, "realtime_partial", &error);
                     if !queue_event_or_overflow(
                         &state,
                         &event_tx,
@@ -391,17 +399,22 @@ fn map_realtime_inference_error(
     }
 }
 
-fn record_inference_health(state: &AppState, kind: &'static str, error: &BlockingInferenceError) {
+fn record_inference_health(
+    state: &AppState,
+    component: &str,
+    kind: &'static str,
+    error: &BlockingInferenceError,
+) {
     match error {
         BlockingInferenceError::Timeout { .. } => state
             .runtime_health
-            .record_failure(format!("{kind} inference timeout")),
+            .record_failure(component, format!("{kind} inference timeout")),
         BlockingInferenceError::Inference(InferenceError::Runtime(_)) => state
             .runtime_health
-            .record_failure(format!("{kind} runtime inference error")),
+            .record_failure(component, format!("{kind} runtime inference error")),
         BlockingInferenceError::Inference(InferenceError::Unavailable(_)) => state
             .runtime_health
-            .record_failure(format!("{kind} engine unavailable")),
+            .record_failure(component, format!("{kind} engine unavailable")),
         BlockingInferenceError::Inference(
             InferenceError::InvalidAudio(_) | InferenceError::UnsupportedEngine(_),
         ) => {}

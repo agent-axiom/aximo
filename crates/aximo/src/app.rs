@@ -14,6 +14,8 @@ use crate::{
 pub struct AppState {
     pub offline_engine: EngineRuntime,
     pub realtime_engine: EngineRuntime,
+    pub offline_engine_name: String,
+    pub realtime_engine_name: String,
     pub session_manager: SessionManager,
     pub scheduler: Scheduler,
     pub short_audio_limits: ShortAudioLimits,
@@ -33,6 +35,8 @@ pub fn build_app(
     realtime_engine: Arc<dyn SpeechEngine>,
 ) -> Router {
     let short_audio_body_limit = settings.limits.max_short_audio_bytes;
+    let offline_engine_name = settings.inference.default_offline_engine.clone();
+    let realtime_engine_name = settings.inference.default_realtime_engine.clone();
     let offline_gate = EngineRuntime::shared_gate();
     let realtime_gate = if Arc::ptr_eq(&offline_engine, &realtime_engine) {
         Arc::clone(&offline_gate)
@@ -42,6 +46,8 @@ pub fn build_app(
     let state = AppState {
         offline_engine: EngineRuntime::with_gate(offline_engine, offline_gate),
         realtime_engine: EngineRuntime::with_gate(realtime_engine, realtime_gate),
+        offline_engine_name,
+        realtime_engine_name,
         session_manager: SessionManager::new(),
         scheduler: Scheduler::new(
             settings.limits.max_short_audio_requests,

@@ -127,14 +127,15 @@ pub async fn transcribe_short(
         audio_duration_ms,
     );
 
+    let health_component = format!("short:{}", state.offline_engine_name);
     match result {
         Ok(result) => {
-            state.runtime_health.record_success();
+            state.runtime_health.record_success(health_component);
             state.metrics.record_http_response(200, "ok");
             Ok(Json(result))
         }
         Err(error) => {
-            record_inference_health(&state, "short", &error);
+            record_inference_health(&state, &health_component, "short", &error);
             let error = map_blocking_inference_error(error, "short-audio inference timed out");
             record_http_error(&state, &error);
             Err(error)
@@ -222,17 +223,22 @@ fn map_blocking_inference_error(error: BlockingInferenceError, timeout_message: 
     }
 }
 
-fn record_inference_health(state: &AppState, kind: &'static str, error: &BlockingInferenceError) {
+fn record_inference_health(
+    state: &AppState,
+    component: &str,
+    kind: &'static str,
+    error: &BlockingInferenceError,
+) {
     match error {
         BlockingInferenceError::Timeout { .. } => state
             .runtime_health
-            .record_failure(format!("{kind} inference timeout")),
+            .record_failure(component, format!("{kind} inference timeout")),
         BlockingInferenceError::Inference(InferenceError::Runtime(_)) => state
             .runtime_health
-            .record_failure(format!("{kind} runtime inference error")),
+            .record_failure(component, format!("{kind} runtime inference error")),
         BlockingInferenceError::Inference(InferenceError::Unavailable(_)) => state
             .runtime_health
-            .record_failure(format!("{kind} engine unavailable")),
+            .record_failure(component, format!("{kind} engine unavailable")),
         BlockingInferenceError::Inference(
             InferenceError::InvalidAudio(_) | InferenceError::UnsupportedEngine(_),
         ) => {}

@@ -65,5 +65,8 @@ async fn metrics_endpoint_reports_short_audio_observability_series() {
     assert!(metrics.contains("aximo_model_executions_active 0"));
     assert!(metrics.contains("aximo_runtime_degraded 0"));
     assert!(metrics.contains("aximo_runtime_consecutive_failures 0"));
+    assert!(metrics.contains(r#"aximo_runtime_component_degraded{component="short:parakeet"} 0"#));
+    assert!(metrics
+        .contains(r#"aximo_runtime_component_consecutive_failures{component="short:parakeet"} 0"#));
     assert!(metrics.contains("aximo_ws_sessions_active "));
 }
