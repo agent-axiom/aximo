@@ -6,6 +6,7 @@
 
 - `POST /v1/transcriptions` for short audio
 - `GET /v1/realtime` for realtime WebSocket streaming
+- `GET /health/live` and `GET /health/ready` for liveness/readiness
 - `GET /openapi.json` for the OpenAPI schema
 - `GET /docs/` for Swagger UI with a built-in microphone recorder panel
 - `GET /metrics` for Prometheus-compatible operational metrics
@@ -83,6 +84,7 @@ For containerized usage, [config/aximo.example.toml](config/aximo.example.toml) 
 ```bash
 AXIMO_SERVER_HOST=0.0.0.0
 AXIMO_SERVER_PORT=8080
+AXIMO_SHUTDOWN_GRACE_PERIOD_MS=30000
 AXIMO_MODELS_DIR=/var/lib/aximo/models
 AXIMO_DEFAULT_OFFLINE_ENGINE=parakeet
 AXIMO_DEFAULT_REALTIME_ENGINE=parakeet
@@ -102,6 +104,7 @@ AXIMO_REALTIME_EVENT_CHANNEL_CAPACITY=64
 AXIMO_SHORT_INFERENCE_TIMEOUT_MS=120000
 AXIMO_REALTIME_PARTIAL_TIMEOUT_MS=5000
 AXIMO_REALTIME_FINAL_TIMEOUT_MS=120000
+AXIMO_RUNTIME_DEGRADE_AFTER_CONSECUTIVE_FAILURES=3
 ```
 
 ## Short Audio Example
@@ -155,9 +158,10 @@ Unsupported short-audio media types return `415 Unsupported Media Type` with cod
 
 Realtime uses WebSocket and raw `pcm_s16le`, `16 kHz`, mono binary chunks. This is bounded buffered realtime, not a true incremental streaming decoder.
 Partial hypotheses are computed from a bounded rolling recent window and use latest-wins coalescing under load, so they favor freshness over a steady partial cadence. The final transcription on `stop` waits for the realtime inference slot and runs over the full bounded session buffer.
-Admission limits and inference limits are configured separately: `max_short_audio_requests` and `max_realtime_sessions` bound accepted work, while `max_short_inferences` and `max_realtime_inferences` bound actual concurrent model executions per engine instance.
+Admission limits and inference limits are configured separately: `max_short_audio_requests` and `max_realtime_sessions` bound accepted work, while `max_short_inferences` and `max_realtime_inferences` bound per-path inference admission. Actual backend execution is additionally protected by a per-engine model gate, shared when offline and realtime reuse the same engine instance.
 Realtime server events are sent through a bounded per-socket queue; clients that stop reading can be disconnected instead of accumulating unbounded memory.
-Realtime partial and final inference have separate timeout budgets. A timeout releases Aximo's scheduler permit and returns an `inference_timeout` event, but the underlying `spawn_blocking` task may continue until the backend call returns because Rust cannot safely kill that OS thread.
+Realtime chunks must be aligned to `pcm_s16le` sample width; odd-length binary frames return `invalid_audio_chunk`.
+Realtime partial and final inference have separate timeout budgets. A timeout releases Aximo's scheduler permit and returns an `inference_timeout` event, but the underlying `spawn_blocking` task may continue until the backend call returns because Rust cannot safely kill that OS thread. The per-engine model gate stays held until that backend call actually exits, so timed-out calls cannot admit unlimited follow-up backend executions.
 
 ```js
 const ws = new WebSocket("ws://127.0.0.1:8080/v1/realtime");
@@ -225,15 +229,32 @@ If container logs include `onnxruntime cpuid_info warning: Unknown CPU vendor`, 
 - `aximo_http_requests_total{status,code}`
 - `aximo_errors_total{code}`
 - `aximo_audio_body_bytes_total`
-- `aximo_audio_decode_seconds_sum`
-- `aximo_audio_duration_seconds_sum`
-- `aximo_inference_wait_seconds_sum{kind}`
-- `aximo_inference_seconds_sum{kind}`
-- `aximo_rtf_sum{kind}`
+- `aximo_audio_decode_seconds_sum/count`
+- `aximo_audio_duration_seconds_sum/count`
+- `aximo_inference_wait_seconds_sum/count{kind}`
+- `aximo_model_execution_wait_seconds_sum/count{kind}`
+- `aximo_inference_seconds_sum/count{kind}`
+- `aximo_rtf_sum/count{kind}`
+- `aximo_inference_timeouts_total{kind}`
+- `aximo_blocking_tasks_active`
+- `aximo_model_executions_active`
+- `aximo_runtime_degraded`
+- `aximo_runtime_consecutive_failures`
 - `aximo_ws_sessions_active`
 - `aximo_ws_queue_overflows_total`
 - `aximo_realtime_partial_coalesced_total`
 - `aximo_realtime_stale_partial_skips_total`
+
+`/health/live` is process liveness. `/health/ready` reports readiness and returns `503` with a JSON `degraded` status after consecutive timeout/runtime/unavailable inference failures reach `runtime_degrade_after_consecutive_failures`. A successful inference clears the degraded state.
+
+On SIGINT or SIGTERM, Aximo stops accepting new connections through axum graceful shutdown and waits up to `shutdown_grace_period_ms`.
+
+## Known Limits
+
+- Realtime is bounded buffered realtime, not a true streaming decoder.
+- The current `transcribe-rs` ONNX adapter path returns plain text; `segments` stays empty and `detected_language` stays `null` until backend metadata is exposed.
+- Audio resampling is intentionally simple for MVP use; production WER/CER work should evaluate a higher-quality resampler.
+- Future hardening candidates: per-request options, timestamp/language support, cargo-audit/cargo-deny, SBOM, and k8s manifests.
 
 ## Development
 

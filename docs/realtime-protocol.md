@@ -7,7 +7,7 @@ This endpoint currently implements bounded buffered realtime. It accepts live ch
 ## Client Messages
 
 - `{"event":"start"}`: starts a realtime session and reserves capacity.
-- binary frame: appends raw `pcm_s16le`, `16kHz`, mono audio bytes to the active session.
+- binary frame: appends raw `pcm_s16le`, `16kHz`, mono audio bytes to the active session. Chunks must be aligned to 16-bit samples.
 - `{"event":"stop"}`: finalizes the session and emits the final transcript.
 
 ## Server Messages
@@ -54,6 +54,7 @@ binary audio chunk
 - binary frame before `start`
 - `stop` before `start`
 - repeated `start` while a session is already active on the same socket
+- odd-length `pcm_s16le` binary chunk
 - realtime capacity exhausted
 - inference failure or inference timeout while producing `partial` or `final`
 
@@ -64,5 +65,6 @@ binary audio chunk
 - `final` is never coalesced or dropped and still runs against the full session buffer within the configured realtime session limits.
 - Server events use a bounded per-socket queue controlled by `realtime_event_channel_capacity`; queue overflow increments `aximo_ws_queue_overflows_total`, attempts to enqueue a final `websocket_queue_overflow` error event, and then terminates the websocket session.
 - Partial and final inference use separate timeout budgets. If a timeout fires, the scheduler permit is released and the client receives `inference_timeout`; the underlying blocking backend call may still return later because the server cannot safely kill the OS blocking thread.
+- A per-engine execution gate is held inside the blocking task until the backend call actually returns. This keeps timeout semantics honest: client wait is bounded, but timed-out backend work still occupies model execution capacity until it exits.
 
 All of the above return a server event with `{"event":"error","code":"...","reason":"..."}`.

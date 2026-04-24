@@ -1,6 +1,7 @@
 [server]
 host = "127.0.0.1"
 port = 8080
+shutdown_grace_period_ms = 30000
 
 [inference]
 models_dir = "./var/models"
@@ -32,3 +33,4 @@ realtime_event_channel_capacity = 64
 short_inference_timeout_ms = 120000
 realtime_partial_timeout_ms = 5000
 realtime_final_timeout_ms = 120000
+runtime_degrade_after_consecutive_failures = 3

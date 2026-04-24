@@ -19,12 +19,13 @@ const RECORDER_STYLES: &str = include_str!("../static/docs/aximo-recorder.css");
 
 #[derive(OpenApi)]
 #[openapi(
-    paths(health_ready_doc, transcribe_short_doc, realtime_doc),
+    paths(health_live_doc, health_ready_doc, transcribe_short_doc, realtime_doc),
     components(
         schemas(
             AudioBinaryBodyDoc,
             ClientEventDoc,
             ErrorResponseDoc,
+            ReadinessDoc,
             ServerEventDoc,
             ShortAudioResultDoc,
             TranscriptSegmentDoc
@@ -56,6 +57,17 @@ struct ErrorResponseDoc {
     code: String,
     /// Human-readable error message.
     message: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+struct ReadinessDoc {
+    /// `ready` or `degraded`.
+    status: String,
+    /// Consecutive timeout/runtime/unavailable inference failures.
+    consecutive_failures: u64,
+    /// Degradation reason when status is `degraded`.
+    #[schema(nullable)]
+    reason: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
@@ -106,9 +118,21 @@ struct ServerEventDoc {
 
 #[utoipa::path(
     get,
+    path = "/health/live",
+    tag = "system",
+    responses((status = 200, description = "Process is alive"))
+)]
+#[allow(dead_code)]
+fn health_live_doc() {}
+
+#[utoipa::path(
+    get,
     path = "/health/ready",
     tag = "system",
-    responses((status = 200, description = "Service is ready"))
+    responses(
+        (status = 200, description = "Service is ready", body = ReadinessDoc),
+        (status = 503, description = "Service is degraded after repeated runtime failures", body = ReadinessDoc)
+    )
 )]
 #[allow(dead_code)]
 fn health_ready_doc() {}
@@ -128,6 +152,7 @@ fn health_ready_doc() {}
         (status = 413, description = "HTTP body, raw PCM bytes, decoded sample count, or decoded duration exceeded configured short-audio limits", body = ErrorResponseDoc),
         (status = 415, description = "Content-Type is not supported for short-audio ingest", body = ErrorResponseDoc),
         (status = 429, description = "Short-audio request or inference concurrency limit exceeded", body = ErrorResponseDoc),
+        (status = 504, description = "Inference exceeded the configured timeout budget", body = ErrorResponseDoc),
         (status = 500, description = "Inference runtime failed inside the service", body = ErrorResponseDoc),
         (status = 503, description = "Inference engine is unavailable", body = ErrorResponseDoc)
     )
@@ -142,7 +167,7 @@ fn transcribe_short_doc() {}
     responses(
         (
             status = 101,
-            description = "WebSocket upgraded. This is bounded buffered realtime, not a true incremental streaming decoder. Send {\"event\":\"start\"}, then raw pcm_s16le 16 kHz mono binary chunks, then {\"event\":\"stop\"}. Server emits session_started, partial, final, and error events. Partial events use latest-wins coalescing from a bounded rolling window; final waits for the realtime inference slot and transcribes the full bounded session buffer. Error events include machine-readable code and human-readable reason."
+            description = "WebSocket upgraded. This is bounded buffered realtime, not a true incremental streaming decoder. Send {\"event\":\"start\"}, then aligned raw pcm_s16le 16 kHz mono binary chunks, then {\"event\":\"stop\"}. Server emits session_started, partial, final, and error events. Partial events use latest-wins coalescing from a bounded rolling window; final waits for the realtime inference slot and transcribes the full bounded session buffer. Error events include machine-readable code and human-readable reason."
         )
     )
 )]

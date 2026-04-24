@@ -22,12 +22,12 @@
 - Test: `crates/aximo/tests/blocking_inference.rs`
 - Test: `crates/aximo/tests/transcriptions_api.rs`
 
-- [ ] Write a test proving two timed-out short requests against one shared engine cannot both enter backend execution while the first backend call is still running.
-- [ ] Add `EngineRuntime` with an `Arc<dyn SpeechEngine>` and an `Arc<Semaphore>`.
-- [ ] Build offline/realtime runtimes with one shared gate when both engine `Arc`s are pointer-equal.
-- [ ] Change blocking inference helper to acquire the model permit before `spawn_blocking` and move the permit into the blocking closure.
-- [ ] Run targeted timeout/concurrency tests.
-- [ ] Commit as `Hold model execution permits through blocking calls`.
+- [x] Write a test proving two timed-out short requests against one shared engine cannot both enter backend execution while the first backend call is still running.
+- [x] Add `EngineRuntime` with an `Arc<dyn SpeechEngine>` and an `Arc<Semaphore>`.
+- [x] Build offline/realtime runtimes with one shared gate when both engine `Arc`s are pointer-equal.
+- [x] Change blocking inference helper to acquire the model permit before `spawn_blocking` and move the permit into the blocking closure.
+- [x] Run targeted timeout/concurrency tests.
+- [x] Commit as `Hold model execution permits through blocking calls`.
 
 ### Task 2: Metrics Upgrade
 
@@ -38,27 +38,27 @@
 - Modify: `crates/aximo/src/ws/handler.rs`
 - Test: `crates/aximo/tests/metrics_api.rs`
 
-- [ ] Add `_count` metrics for decode, audio duration, inference wait, inference duration, and RTF.
-- [ ] Emit Prometheus `# HELP` and `# TYPE` lines for every metric family.
-- [ ] Track active blocking tasks and active engine executions.
-- [ ] Record model execution wait separately from scheduler admission wait.
-- [ ] Run `cargo test -p aximo --test metrics_api`.
-- [ ] Commit as `Improve runtime metrics fidelity`.
+- [x] Add `_count` metrics for decode, audio duration, inference wait, inference duration, and RTF.
+- [x] Emit Prometheus `# HELP` and `# TYPE` lines for every metric family.
+- [x] Track active blocking tasks and active engine executions.
+- [x] Record model execution wait separately from scheduler admission wait.
+- [x] Run `cargo test -p aximo --test metrics_api`.
+- [x] Commit as `Improve runtime metrics fidelity`.
 
 ### Task 3: Readiness and Runtime Health
 
 **Files:**
-- Create: `crates/aximo/src/health.rs`
+- Create: `crates/aximo/src/runtime_health.rs`
 - Modify: `crates/aximo/src/app.rs`
 - Modify: `crates/aximo/src/http/health.rs`
 - Test: `crates/aximo/tests/health_api.rs`
 
-- [ ] Add `/health/live` as process liveness.
-- [ ] Make `/health/ready` read runtime health state.
-- [ ] Mark health degraded when repeated inference timeouts or runtime failures cross a small threshold.
-- [ ] Return `503` while degraded and expose the degraded state in metrics.
-- [ ] Run `cargo test -p aximo --test health_api`.
-- [ ] Commit as `Make readiness reflect runtime health`.
+- [x] Add `/health/live` as process liveness.
+- [x] Make `/health/ready` read runtime health state.
+- [x] Mark health degraded when repeated inference timeouts or runtime failures cross a small threshold.
+- [x] Return `503` while degraded and expose the degraded state in metrics.
+- [x] Run `cargo test -p aximo --test health_api`.
+- [x] Commit as `Make readiness reflect runtime health`.
 
 ### Task 4: Realtime PCM Alignment
 
@@ -67,11 +67,11 @@
 - Test: `crates/aximo/tests/realtime_protocol.rs`
 - Modify: `docs/realtime-protocol.md`
 
-- [ ] Add a websocket regression test that sends an odd-length binary frame and expects `invalid_audio`.
-- [ ] Reject odd-length realtime PCM chunks before appending to the session buffer.
-- [ ] Document that every binary chunk must be aligned to `pcm_s16le` sample boundaries.
-- [ ] Run `cargo test -p aximo --test realtime_protocol`.
-- [ ] Commit as `Validate realtime PCM chunk alignment`.
+- [x] Add a websocket regression test that sends an odd-length binary frame and expects `invalid_audio_chunk`.
+- [x] Reject odd-length realtime PCM chunks before appending to the session buffer.
+- [x] Document that every binary chunk must be aligned to `pcm_s16le` sample boundaries.
+- [x] Run `cargo test -p aximo --test realtime_protocol`.
+- [x] Commit as `Validate realtime PCM chunk alignment`.
 
 ### Task 5: Graceful Shutdown
 
@@ -81,13 +81,13 @@
 - Modify: `config/aximo.example.toml`
 - Modify: `config/aximo.local.toml`
 - Modify: `README.md`
-- Test: `crates/aximo/src/config.rs`
+- Test: `crates/aximo/tests/runtime_config.rs`
 
-- [ ] Add `shutdown_grace_period_ms` to settings and env overlays.
-- [ ] Use `axum::serve(...).with_graceful_shutdown(...)` with SIGTERM/SIGINT handling.
-- [ ] Document shutdown semantics for Docker/k8s.
-- [ ] Run config tests.
-- [ ] Commit as `Add graceful shutdown signal handling`.
+- [x] Add `shutdown_grace_period_ms` to settings and env overlays.
+- [x] Use `axum::serve(...).with_graceful_shutdown(...)` with SIGTERM/SIGINT handling.
+- [x] Document shutdown semantics for Docker/k8s.
+- [x] Run config tests.
+- [x] Commit as `Add graceful shutdown signal handling`.
 
 ### Task 6: Documentation
 
@@ -96,8 +96,8 @@
 - Modify: `docs/architecture.md`
 - Modify: `docs/realtime-protocol.md`
 
-- [ ] Document that scheduler limits are admission limits, while `EngineRuntime` gates real model execution.
-- [ ] Keep `segments`, `detected_language`, and linear resampling limitations explicitly documented as backend/product limitations.
-- [ ] Document remaining future work: better resampler, per-request options, timestamps/language when backend exposes them, cargo audit/deny/SBOM.
-- [ ] Run docs/API tests.
-- [ ] Commit as `Document runtime hardening semantics`.
+- [x] Document that scheduler limits are admission limits, while `EngineRuntime` gates real model execution.
+- [x] Keep `segments`, `detected_language`, and linear resampling limitations explicitly documented as backend/product limitations.
+- [x] Document remaining future work: better resampler, per-request options, timestamps/language when backend exposes them, cargo audit/deny/SBOM.
+- [x] Run docs/API tests.
+- [x] Commit as `Document runtime hardening semantics`.

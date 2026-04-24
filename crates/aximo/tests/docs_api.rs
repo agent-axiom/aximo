@@ -25,7 +25,10 @@ async fn openapi_document_is_served_as_json() {
 
     assert_eq!(json["openapi"], "3.1.0");
     assert!(json["paths"]["/v1/transcriptions"].is_object());
+    assert!(json["paths"]["/health/live"].is_object());
     assert!(json["paths"]["/health/ready"].is_object());
+    assert!(json["paths"]["/health/ready"]["get"]["responses"]["503"].is_object());
+    assert!(json["paths"]["/v1/transcriptions"]["post"]["responses"]["504"].is_object());
     assert!(json["paths"]["/v1/realtime"].is_object());
 }
 
