@@ -3,5 +3,7 @@
 mod decode;
 mod normalize;
 
-pub use decode::{decode_container, AudioError, DecodedAudio};
-pub use normalize::{prepare_short_audio, PreparedAudio};
+pub use decode::{decode_container, decode_container_with_sample_limit, AudioError, DecodedAudio};
+pub use normalize::{
+    prepare_short_audio, prepare_short_audio_with_limits, PreparedAudio, ShortAudioLimits,
+};

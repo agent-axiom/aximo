@@ -62,8 +62,12 @@ pub async fn transcribe_short(
         .and_then(|value| value.to_str().ok())
         .unwrap_or("application/octet-stream")
         .to_string();
-    let prepared_audio =
-        aximo_audio::prepare_short_audio(body.as_ref(), &content_type).map_err(map_audio_error)?;
+    let prepared_audio = aximo_audio::prepare_short_audio_with_limits(
+        body.as_ref(),
+        &content_type,
+        state.short_audio_limits,
+    )
+    .map_err(map_audio_error)?;
 
     let request = ShortAudioRequest {
         audio_bytes: prepared_audio.audio_bytes,
@@ -93,6 +97,11 @@ fn map_audio_error(error: AudioError) -> HttpError {
             StatusCode::UNSUPPORTED_MEDIA_TYPE,
             "unsupported_media_type",
             format!("unsupported media type: {message}"),
+        ),
+        AudioError::TooLarge(message) => HttpError::new(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "payload_too_large",
+            format!("audio payload too large: {message}"),
         ),
         AudioError::InvalidPcm(message) => HttpError::new(
             StatusCode::BAD_REQUEST,

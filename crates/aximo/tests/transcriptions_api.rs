@@ -365,6 +365,107 @@ async fn transcription_endpoint_returns_unsupported_media_type_for_unknown_conte
 }
 
 #[tokio::test]
+async fn transcription_endpoint_returns_payload_too_large_for_http_body_limit() {
+    let mut settings = aximo::config::Settings::default();
+    settings.limits.max_short_audio_bytes = 4;
+    let app = aximo::app::build_app(
+        settings,
+        Arc::new(aximo_inference::engine::FakeEngine),
+        Arc::new(aximo_inference::engine::FakeEngine),
+    );
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/transcriptions")
+                .header("content-type", "audio/pcm")
+                .body(Body::from(vec![0_u8; 8]))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+}
+
+#[tokio::test]
+async fn transcription_endpoint_returns_payload_too_large_for_raw_pcm_limit() {
+    let mut settings = aximo::config::Settings::default();
+    settings.limits.max_short_audio_bytes = 1024;
+    settings.limits.max_short_raw_pcm_bytes = 4;
+    let app = aximo::app::build_app(
+        settings,
+        Arc::new(aximo_inference::engine::FakeEngine),
+        Arc::new(aximo_inference::engine::FakeEngine),
+    );
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/transcriptions")
+                .header("content-type", "audio/pcm")
+                .body(Body::from(vec![0_u8; 8]))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let json: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["code"], "payload_too_large");
+}
+
+#[tokio::test]
+async fn transcription_endpoint_returns_payload_too_large_for_decoded_duration_limit() {
+    let mut settings = aximo::config::Settings::default();
+    settings.limits.max_short_audio_duration_ms = 1;
+    let app = aximo::app::build_app(
+        settings,
+        Arc::new(aximo_inference::engine::FakeEngine),
+        Arc::new(aximo_inference::engine::FakeEngine),
+    );
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/transcriptions")
+                .header("content-type", "audio/wav")
+                .body(Body::from(fixture_bytes("tone-16k-mono.wav")))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+}
+
+#[tokio::test]
+async fn transcription_endpoint_returns_payload_too_large_for_decoded_sample_limit() {
+    let mut settings = aximo::config::Settings::default();
+    settings.limits.max_short_decoded_samples = 1;
+    let app = aximo::app::build_app(
+        settings,
+        Arc::new(aximo_inference::engine::FakeEngine),
+        Arc::new(aximo_inference::engine::FakeEngine),
+    );
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/transcriptions")
+                .header("content-type", "audio/mpeg")
+                .body(Body::from(fixture_bytes("tone-16k-mono.mp3")))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+}
+
+#[tokio::test]
 async fn transcription_endpoint_returns_bad_request_for_unsupported_engine() {
     let app = aximo::app::build_app(
         aximo::config::Settings::default(),

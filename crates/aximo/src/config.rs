@@ -48,6 +48,18 @@ impl Settings {
         if let Some(value) = env_parse("AXIMO_MAX_SHORT_AUDIO_REQUESTS")? {
             self.limits.max_short_audio_requests = value;
         }
+        if let Some(value) = env_parse("AXIMO_MAX_SHORT_AUDIO_BYTES")? {
+            self.limits.max_short_audio_bytes = value;
+        }
+        if let Some(value) = env_parse("AXIMO_MAX_SHORT_RAW_PCM_BYTES")? {
+            self.limits.max_short_raw_pcm_bytes = value;
+        }
+        if let Some(value) = env_parse("AXIMO_MAX_SHORT_AUDIO_DURATION_MS")? {
+            self.limits.max_short_audio_duration_ms = value;
+        }
+        if let Some(value) = env_parse("AXIMO_MAX_SHORT_DECODED_SAMPLES")? {
+            self.limits.max_short_decoded_samples = value;
+        }
         if let Some(value) = env_parse("AXIMO_MAX_REALTIME_SESSIONS")? {
             self.limits.max_realtime_sessions = value;
         }
@@ -117,6 +129,10 @@ impl Default for ServerSettings {
 #[serde(default)]
 pub struct LimitSettings {
     pub max_short_audio_requests: usize,
+    pub max_short_audio_bytes: usize,
+    pub max_short_raw_pcm_bytes: usize,
+    pub max_short_audio_duration_ms: u64,
+    pub max_short_decoded_samples: usize,
     pub max_realtime_sessions: usize,
     pub max_short_inferences: usize,
     pub max_realtime_inferences: usize,
@@ -130,6 +146,10 @@ impl Default for LimitSettings {
     fn default() -> Self {
         Self {
             max_short_audio_requests: 8,
+            max_short_audio_bytes: 25_000_000,
+            max_short_raw_pcm_bytes: 1_920_000,
+            max_short_audio_duration_ms: 60_000,
+            max_short_decoded_samples: 5_760_000,
             max_realtime_sessions: 24,
             max_short_inferences: 1,
             max_realtime_inferences: 1,
@@ -197,6 +217,10 @@ mod tests {
         "AXIMO_DEFAULT_OFFLINE_ENGINE",
         "AXIMO_DEFAULT_REALTIME_ENGINE",
         "AXIMO_MAX_SHORT_AUDIO_REQUESTS",
+        "AXIMO_MAX_SHORT_AUDIO_BYTES",
+        "AXIMO_MAX_SHORT_RAW_PCM_BYTES",
+        "AXIMO_MAX_SHORT_AUDIO_DURATION_MS",
+        "AXIMO_MAX_SHORT_DECODED_SAMPLES",
         "AXIMO_MAX_REALTIME_SESSIONS",
         "AXIMO_MAX_SHORT_INFERENCES",
         "AXIMO_MAX_REALTIME_INFERENCES",
@@ -297,6 +321,10 @@ path = "giga-am-v3"
 
 [limits]
 max_short_audio_requests = 2
+max_short_audio_bytes = 1000
+max_short_raw_pcm_bytes = 1000
+max_short_audio_duration_ms = 2000
+max_short_decoded_samples = 3000
 max_realtime_sessions = 3
 max_short_inferences = 1
 max_realtime_inferences = 1
@@ -315,6 +343,10 @@ realtime_partial_min_chunk_bytes = 400
         std::env::set_var("AXIMO_DEFAULT_OFFLINE_ENGINE", "gigaam");
         std::env::set_var("AXIMO_DEFAULT_REALTIME_ENGINE", "parakeet");
         std::env::set_var("AXIMO_MAX_SHORT_AUDIO_REQUESTS", "9");
+        std::env::set_var("AXIMO_MAX_SHORT_AUDIO_BYTES", "10000");
+        std::env::set_var("AXIMO_MAX_SHORT_RAW_PCM_BYTES", "11000");
+        std::env::set_var("AXIMO_MAX_SHORT_AUDIO_DURATION_MS", "12000");
+        std::env::set_var("AXIMO_MAX_SHORT_DECODED_SAMPLES", "13000");
         std::env::set_var("AXIMO_MAX_REALTIME_SESSIONS", "10");
         std::env::set_var("AXIMO_MAX_SHORT_INFERENCES", "2");
         std::env::set_var("AXIMO_MAX_REALTIME_INFERENCES", "3");
@@ -331,6 +363,10 @@ realtime_partial_min_chunk_bytes = 400
         assert_eq!(settings.inference.default_offline_engine, "gigaam");
         assert_eq!(settings.inference.default_realtime_engine, "parakeet");
         assert_eq!(settings.limits.max_short_audio_requests, 9);
+        assert_eq!(settings.limits.max_short_audio_bytes, 10000);
+        assert_eq!(settings.limits.max_short_raw_pcm_bytes, 11000);
+        assert_eq!(settings.limits.max_short_audio_duration_ms, 12000);
+        assert_eq!(settings.limits.max_short_decoded_samples, 13000);
         assert_eq!(settings.limits.max_realtime_sessions, 10);
         assert_eq!(settings.limits.max_short_inferences, 2);
         assert_eq!(settings.limits.max_realtime_inferences, 3);

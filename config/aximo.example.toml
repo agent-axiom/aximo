@@ -19,6 +19,10 @@ path = "giga-am-v3"
 
 [limits]
 max_short_audio_requests = 8
+max_short_audio_bytes = 25000000
+max_short_raw_pcm_bytes = 1920000
+max_short_audio_duration_ms = 60000
+max_short_decoded_samples = 5760000
 max_realtime_sessions = 24
 max_short_inferences = 1
 max_realtime_inferences = 1

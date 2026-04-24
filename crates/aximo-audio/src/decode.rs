@@ -11,6 +11,8 @@ use thiserror::Error;
 pub enum AudioError {
     #[error("unsupported content type {0}")]
     UnsupportedContentType(String),
+    #[error("audio payload too large: {0}")]
+    TooLarge(String),
     #[error("invalid raw pcm payload: {0}")]
     InvalidPcm(String),
     #[error("failed to decode audio container: {0}")]
@@ -25,6 +27,14 @@ pub struct DecodedAudio {
 }
 
 pub fn decode_container(bytes: &[u8], content_type: &str) -> Result<DecodedAudio, AudioError> {
+    decode_container_with_sample_limit(bytes, content_type, usize::MAX)
+}
+
+pub fn decode_container_with_sample_limit(
+    bytes: &[u8],
+    content_type: &str,
+    max_decoded_samples: usize,
+) -> Result<DecodedAudio, AudioError> {
     let mut hint = Hint::new();
     if let Some(extension) = extension_hint(content_type) {
         hint.with_extension(extension);
@@ -85,6 +95,11 @@ pub fn decode_container(bytes: &[u8], content_type: &str) -> Result<DecodedAudio
             SampleBuffer::<f32>::new(decoded.capacity() as u64, *decoded.spec());
         sample_buffer.copy_interleaved_ref(decoded);
         samples.extend_from_slice(sample_buffer.samples());
+        if samples.len() > max_decoded_samples {
+            return Err(AudioError::TooLarge(format!(
+                "decoded audio exceeded {max_decoded_samples} samples"
+            )));
+        }
     }
 
     let sample_rate = sample_rate
@@ -155,5 +170,17 @@ mod tests {
     fn decode_container_rejects_invalid_bytes() {
         let error = decode_container(b"not-audio", "audio/mpeg").unwrap_err();
         assert!(matches!(error, AudioError::Decode(_)));
+    }
+
+    #[test]
+    fn decode_container_rejects_streams_over_sample_limit() {
+        let error = decode_container_with_sample_limit(
+            &fixture_bytes("tone-16k-mono.mp3"),
+            "audio/mpeg",
+            1,
+        )
+        .unwrap_err();
+
+        assert!(matches!(error, AudioError::TooLarge(_)));
     }
 }

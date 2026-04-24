@@ -86,6 +86,10 @@ AXIMO_MODELS_DIR=/var/lib/aximo/models
 AXIMO_DEFAULT_OFFLINE_ENGINE=parakeet
 AXIMO_DEFAULT_REALTIME_ENGINE=parakeet
 AXIMO_MAX_SHORT_AUDIO_REQUESTS=8
+AXIMO_MAX_SHORT_AUDIO_BYTES=25000000
+AXIMO_MAX_SHORT_RAW_PCM_BYTES=1920000
+AXIMO_MAX_SHORT_AUDIO_DURATION_MS=60000
+AXIMO_MAX_SHORT_DECODED_SAMPLES=5760000
 AXIMO_MAX_REALTIME_SESSIONS=24
 AXIMO_MAX_SHORT_INFERENCES=1
 AXIMO_MAX_REALTIME_INFERENCES=1
@@ -107,7 +111,7 @@ Short transcription currently accepts:
 - `audio/pcm`
 - `application/octet-stream`
 
-Compressed/container formats are decoded and normalized before inference. `audio/pcm` and `application/octet-stream` are still interpreted as raw `pcm_s16le`, `16 kHz`, mono audio.
+Compressed/container formats are decoded and normalized before inference. `audio/pcm` and `application/octet-stream` are still interpreted as raw `pcm_s16le`, `16 kHz`, mono audio. Short-audio ingest is bounded by HTTP body size, raw PCM byte size, decoded sample count, and decoded duration; limit violations return `413 Payload Too Large`.
 
 ```bash
 curl -X POST http://127.0.0.1:8080/v1/transcriptions \

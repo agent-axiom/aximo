@@ -32,6 +32,10 @@ path = "giga-am-v3"
 
 [limits]
 max_short_audio_requests = 4
+max_short_audio_bytes = 12000000
+max_short_raw_pcm_bytes = 960000
+max_short_audio_duration_ms = 30000
+max_short_decoded_samples = 2880000
 max_realtime_sessions = 2
 max_short_inferences = 1
 max_realtime_inferences = 1
@@ -48,8 +52,16 @@ realtime_partial_min_chunk_bytes = 12000
     assert_eq!(settings.server.host, "127.0.0.1");
     assert_eq!(settings.server.port, 9090);
     assert_eq!(settings.inference.models_dir, "/srv/models");
+    assert_eq!(settings.limits.max_short_audio_bytes, 12000000);
+    assert_eq!(settings.limits.max_short_raw_pcm_bytes, 960000);
+    assert_eq!(settings.limits.max_short_audio_duration_ms, 30000);
+    assert_eq!(settings.limits.max_short_decoded_samples, 2880000);
     assert_eq!(settings.limits.max_realtime_sessions, 2);
     assert_eq!(settings.limits.max_short_inferences, 1);
+    assert_eq!(settings.limits.max_short_audio_bytes, 25_000_000);
+    assert_eq!(settings.limits.max_short_raw_pcm_bytes, 1_920_000);
+    assert_eq!(settings.limits.max_short_audio_duration_ms, 60_000);
+    assert_eq!(settings.limits.max_short_decoded_samples, 5_760_000);
     assert_eq!(settings.limits.max_realtime_inferences, 1);
     assert_eq!(settings.limits.max_realtime_session_bytes, 960000);
     assert_eq!(settings.limits.max_realtime_session_duration_ms, 30000);
