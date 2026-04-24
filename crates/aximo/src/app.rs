@@ -5,12 +5,12 @@ use aximo_core::{RealtimePartialLimits, RealtimeSessionLimits, Scheduler, Sessio
 use aximo_inference::engine::{FakeEngine, SpeechEngine};
 use axum::{extract::DefaultBodyLimit, Router};
 
-use crate::{config::Settings, http, metrics::Metrics, ws};
+use crate::{config::Settings, engine_runtime::EngineRuntime, http, metrics::Metrics, ws};
 
 #[derive(Clone)]
 pub struct AppState {
-    pub offline_engine: Arc<dyn SpeechEngine>,
-    pub realtime_engine: Arc<dyn SpeechEngine>,
+    pub offline_engine: EngineRuntime,
+    pub realtime_engine: EngineRuntime,
     pub session_manager: SessionManager,
     pub scheduler: Scheduler,
     pub short_audio_limits: ShortAudioLimits,
@@ -29,9 +29,15 @@ pub fn build_app(
     realtime_engine: Arc<dyn SpeechEngine>,
 ) -> Router {
     let short_audio_body_limit = settings.limits.max_short_audio_bytes;
+    let offline_gate = EngineRuntime::shared_gate();
+    let realtime_gate = if Arc::ptr_eq(&offline_engine, &realtime_engine) {
+        Arc::clone(&offline_gate)
+    } else {
+        EngineRuntime::shared_gate()
+    };
     let state = AppState {
-        offline_engine,
-        realtime_engine,
+        offline_engine: EngineRuntime::with_gate(offline_engine, offline_gate),
+        realtime_engine: EngineRuntime::with_gate(realtime_engine, realtime_gate),
         session_manager: SessionManager::new(),
         scheduler: Scheduler::new(
             settings.limits.max_short_audio_requests,

@@ -1,6 +1,7 @@
 pub mod app;
 pub mod config;
 pub mod docs;
+pub mod engine_runtime;
 pub mod http;
 pub mod inference_task;
 pub mod metrics;
