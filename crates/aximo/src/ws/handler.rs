@@ -27,7 +27,9 @@ pub async fn realtime_socket(
 
 async fn handle_socket(socket: WebSocket, state: AppState) {
     let (mut sender, mut receiver) = socket.split();
-    let (event_tx, mut event_rx) = mpsc::unbounded_channel::<ServerEvent>();
+    let (event_tx, mut event_rx) =
+        mpsc::channel::<ServerEvent>(state.realtime_event_channel_capacity);
+    let (overflow_tx, mut overflow_rx) = mpsc::channel::<()>(1);
     let writer = tokio::spawn(async move {
         while let Some(event) = event_rx.recv().await {
             let message = serde_json::to_string(&event).expect("serialize websocket event");
@@ -38,12 +40,27 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
     });
     let mut active_session_id: Option<String> = None;
 
-    while let Some(Ok(message)) = receiver.next().await {
+    loop {
+        macro_rules! queue_or_break {
+            ($event:expr $(,)?) => {
+                if !queue_event(&event_tx, $event) {
+                    break;
+                }
+            };
+        }
+
+        let message = tokio::select! {
+            _ = overflow_rx.recv() => break,
+            message = receiver.next() => message,
+        };
+        let Some(Ok(message)) = message else {
+            break;
+        };
+
         match message {
             Message::Text(text) => {
                 let Ok(client_event) = serde_json::from_str::<ClientEvent>(&text) else {
-                    queue_event(
-                        &event_tx,
+                    queue_or_break!(
                         ServerEvent::error("invalid_client_event", "failed to parse client event"),
                     );
                     continue;
@@ -52,8 +69,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                 match client_event.event.as_str() {
                     "start" => {
                         if active_session_id.is_some() {
-                            queue_event(
-                                &event_tx,
+                            queue_or_break!(
                                 ServerEvent::error(
                                     "duplicate_start",
                                     "session already started for this socket",
@@ -68,11 +84,10 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                                     .session_manager
                                     .start_session(permit, state.realtime_session_limits);
                                 active_session_id = Some(session_id.clone());
-                                queue_event(&event_tx, ServerEvent::session_started(session_id));
+                                queue_or_break!(ServerEvent::session_started(session_id));
                             }
                             Err(_) => {
-                                queue_event(
-                                    &event_tx,
+                                queue_or_break!(
                                     ServerEvent::error(
                                         "realtime_capacity_exhausted",
                                         "realtime session capacity exhausted",
@@ -102,18 +117,16 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                                 .await
                             {
                                 Ok(result) => {
-                                    queue_event(&event_tx, ServerEvent::final_text(result.text));
+                                    queue_or_break!(ServerEvent::final_text(result.text));
                                 }
                                 Err(error) => {
-                                    queue_event(
-                                        &event_tx,
+                                    queue_or_break!(
                                         ServerEvent::error("inference_failed", error.to_string()),
                                     );
                                 }
                             }
                         } else {
-                            queue_event(
-                                &event_tx,
+                            queue_or_break!(
                                 ServerEvent::error(
                                     "no_active_session",
                                     "stop requested without an active session",
@@ -122,8 +135,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                         }
                     }
                     _ => {
-                        queue_event(
-                            &event_tx,
+                        queue_or_break!(
                             ServerEvent::error(
                                 "unsupported_client_event",
                                 format!("unsupported client event: {}", client_event.event),
@@ -146,13 +158,13 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                                     state.clone(),
                                     session_id.to_string(),
                                     event_tx.clone(),
+                                    overflow_tx.clone(),
                                 );
                             }
                         }
                         Err(SessionError::SessionTooLarge) => {
                             cleanup_active_session(&state, &mut active_session_id);
-                            queue_event(
-                                &event_tx,
+                            queue_or_break!(
                                 ServerEvent::error(
                                     "realtime_session_too_large",
                                     "realtime session exceeded configured byte limit",
@@ -161,8 +173,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                         }
                         Err(SessionError::SessionTooLong) => {
                             cleanup_active_session(&state, &mut active_session_id);
-                            queue_event(
-                                &event_tx,
+                            queue_or_break!(
                                 ServerEvent::error(
                                     "realtime_session_too_long",
                                     "realtime session exceeded configured duration limit",
@@ -170,8 +181,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                             );
                         }
                         Err(SessionError::MissingSession) => {
-                            queue_event(
-                                &event_tx,
+                            queue_or_break!(
                                 ServerEvent::error(
                                     "audio_append_failed",
                                     "failed to append audio to the active realtime session",
@@ -180,8 +190,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                         }
                     }
                 } else {
-                    queue_event(
-                        &event_tx,
+                    queue_or_break!(
                         ServerEvent::error(
                             "no_active_session",
                             "binary audio received before start",
@@ -203,7 +212,8 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
 fn spawn_partial_inference(
     state: AppState,
     session_id: String,
-    event_tx: mpsc::UnboundedSender<ServerEvent>,
+    event_tx: mpsc::Sender<ServerEvent>,
+    overflow_tx: mpsc::Sender<()>,
 ) {
     tokio::spawn(async move {
         loop {
@@ -234,13 +244,19 @@ fn spawn_partial_inference(
 
             match inference_result {
                 Ok(result) => {
-                    queue_event(&event_tx, ServerEvent::partial_text(result.text));
+                    if !queue_event(&event_tx, ServerEvent::partial_text(result.text)) {
+                        let _ = overflow_tx.try_send(());
+                        break;
+                    }
                 }
                 Err(error) => {
-                    queue_event(
+                    if !queue_event(
                         &event_tx,
                         ServerEvent::error("inference_failed", error.to_string()),
-                    );
+                    ) {
+                        let _ = overflow_tx.try_send(());
+                        break;
+                    }
                 }
             }
 
@@ -251,12 +267,25 @@ fn spawn_partial_inference(
     });
 }
 
-fn queue_event(event_tx: &mpsc::UnboundedSender<ServerEvent>, event: ServerEvent) {
-    let _ = event_tx.send(event);
+fn queue_event(event_tx: &mpsc::Sender<ServerEvent>, event: ServerEvent) -> bool {
+    event_tx.try_send(event).is_ok()
 }
 
 fn cleanup_active_session(state: &AppState, active_session_id: &mut Option<String>) {
     if let Some(session_id) = active_session_id.take() {
         let _ = state.session_manager.finish_session(&session_id);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn queue_event_reports_full_bounded_channel() {
+        let (event_tx, _event_rx) = mpsc::channel(1);
+
+        assert!(queue_event(&event_tx, ServerEvent::partial_text("first")));
+        assert!(!queue_event(&event_tx, ServerEvent::partial_text("second")));
     }
 }

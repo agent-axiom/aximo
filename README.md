@@ -97,6 +97,7 @@ AXIMO_MAX_REALTIME_SESSION_BYTES=1920000
 AXIMO_MAX_REALTIME_SESSION_DURATION_MS=60000
 AXIMO_REALTIME_PARTIAL_MIN_INTERVAL_MS=300
 AXIMO_REALTIME_PARTIAL_MIN_CHUNK_BYTES=9600
+AXIMO_REALTIME_EVENT_CHANNEL_CAPACITY=64
 ```
 
 ## Short Audio Example
@@ -150,6 +151,7 @@ Unsupported short-audio media types return `415 Unsupported Media Type` with cod
 Realtime uses WebSocket and raw `pcm_s16le`, `16 kHz`, mono binary chunks. This is bounded buffered realtime, not a true incremental streaming decoder.
 Partial hypotheses are computed from a bounded rolling recent window and use latest-wins coalescing under load, so they favor freshness over a steady partial cadence. The final transcription on `stop` waits for the realtime inference slot and runs over the full bounded session buffer.
 Admission limits and inference limits are configured separately: `max_short_audio_requests` and `max_realtime_sessions` bound accepted work, while `max_short_inferences` and `max_realtime_inferences` bound actual concurrent model executions per engine instance.
+Realtime server events are sent through a bounded per-socket queue; clients that stop reading can be disconnected instead of accumulating unbounded memory.
 
 ```js
 const ws = new WebSocket("ws://127.0.0.1:8080/v1/realtime");

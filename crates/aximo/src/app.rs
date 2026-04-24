@@ -16,6 +16,7 @@ pub struct AppState {
     pub short_audio_limits: ShortAudioLimits,
     pub realtime_session_limits: RealtimeSessionLimits,
     pub realtime_partial_limits: RealtimePartialLimits,
+    pub realtime_event_channel_capacity: usize,
 }
 
 pub fn build_app(
@@ -51,6 +52,7 @@ pub fn build_app(
             ),
             min_chunk_bytes: settings.limits.realtime_partial_min_chunk_bytes,
         },
+        realtime_event_channel_capacity: settings.limits.realtime_event_channel_capacity.max(1),
     };
 
     Router::new()

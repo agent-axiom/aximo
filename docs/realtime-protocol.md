@@ -62,5 +62,6 @@ binary audio chunk
 - `partial` updates are lossy by design and optimized for freshness.
 - If multiple eligible partials accumulate while one is already in flight, they are coalesced into one latest follow-up partial.
 - `final` is never coalesced or dropped and still runs against the full session buffer within the configured realtime session limits.
+- Server events use a bounded per-socket queue controlled by `realtime_event_channel_capacity`; queue overflow terminates the websocket session.
 
 All of the above return a server event with `{"event":"error","code":"...","reason":"..."}`.

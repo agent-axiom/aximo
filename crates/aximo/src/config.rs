@@ -81,6 +81,9 @@ impl Settings {
         if let Some(value) = env_parse("AXIMO_REALTIME_PARTIAL_MIN_CHUNK_BYTES")? {
             self.limits.realtime_partial_min_chunk_bytes = value;
         }
+        if let Some(value) = env_parse("AXIMO_REALTIME_EVENT_CHANNEL_CAPACITY")? {
+            self.limits.realtime_event_channel_capacity = value;
+        }
 
         Ok(())
     }
@@ -140,6 +143,7 @@ pub struct LimitSettings {
     pub max_realtime_session_duration_ms: u64,
     pub realtime_partial_min_interval_ms: u64,
     pub realtime_partial_min_chunk_bytes: usize,
+    pub realtime_event_channel_capacity: usize,
 }
 
 impl Default for LimitSettings {
@@ -157,6 +161,7 @@ impl Default for LimitSettings {
             max_realtime_session_duration_ms: 60_000,
             realtime_partial_min_interval_ms: 300,
             realtime_partial_min_chunk_bytes: 9_600,
+            realtime_event_channel_capacity: 64,
         }
     }
 }
@@ -228,6 +233,7 @@ mod tests {
         "AXIMO_MAX_REALTIME_SESSION_DURATION_MS",
         "AXIMO_REALTIME_PARTIAL_MIN_INTERVAL_MS",
         "AXIMO_REALTIME_PARTIAL_MIN_CHUNK_BYTES",
+        "AXIMO_REALTIME_EVENT_CHANNEL_CAPACITY",
     ];
 
     fn env_lock() -> &'static Mutex<()> {
@@ -332,6 +338,7 @@ max_realtime_session_bytes = 1000
 max_realtime_session_duration_ms = 2000
 realtime_partial_min_interval_ms = 300
 realtime_partial_min_chunk_bytes = 400
+realtime_event_channel_capacity = 32
 "#,
         )
         .unwrap();
@@ -354,6 +361,7 @@ realtime_partial_min_chunk_bytes = 400
         std::env::set_var("AXIMO_MAX_REALTIME_SESSION_DURATION_MS", "654321");
         std::env::set_var("AXIMO_REALTIME_PARTIAL_MIN_INTERVAL_MS", "150");
         std::env::set_var("AXIMO_REALTIME_PARTIAL_MIN_CHUNK_BYTES", "8192");
+        std::env::set_var("AXIMO_REALTIME_EVENT_CHANNEL_CAPACITY", "16");
 
         let settings = Settings::load().unwrap();
 
@@ -374,6 +382,7 @@ realtime_partial_min_chunk_bytes = 400
         assert_eq!(settings.limits.max_realtime_session_duration_ms, 654321);
         assert_eq!(settings.limits.realtime_partial_min_interval_ms, 150);
         assert_eq!(settings.limits.realtime_partial_min_chunk_bytes, 8192);
+        assert_eq!(settings.limits.realtime_event_channel_capacity, 16);
 
         clear_overlay_env();
     }
