@@ -13,7 +13,7 @@ use tokio::sync::{mpsc, mpsc::error::TrySendError};
 
 use crate::{
     app::AppState,
-    inference_task::{run_blocking_inference_with_timeout, BlockingInferenceError},
+    inference_task::{run_observed_blocking_inference_with_timeout, BlockingInferenceError},
     ws::protocol::{ClientEvent, ServerEvent},
 };
 
@@ -121,10 +121,12 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                             let wait_elapsed = wait_started_at.elapsed();
 
                             let inference_started_at = Instant::now();
-                            match run_blocking_inference_with_timeout(
+                            match run_observed_blocking_inference_with_timeout(
                                 state.realtime_engine.clone(),
                                 request,
                                 state.realtime_final_timeout,
+                                state.metrics.clone(),
+                                "realtime_final",
                             )
                             .await
                             {
@@ -257,10 +259,12 @@ fn spawn_partial_inference(
             };
 
             let inference_started_at = Instant::now();
-            let inference_result = run_blocking_inference_with_timeout(
+            let inference_result = run_observed_blocking_inference_with_timeout(
                 state.realtime_engine.clone(),
                 request,
                 state.realtime_partial_timeout,
+                state.metrics.clone(),
+                "realtime_partial",
             )
             .await;
             let inference_elapsed = inference_started_at.elapsed();

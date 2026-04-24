@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 
 use crate::{
     app::AppState,
-    inference_task::{run_blocking_inference_with_timeout, BlockingInferenceError},
+    inference_task::{run_observed_blocking_inference_with_timeout, BlockingInferenceError},
 };
 
 #[derive(Debug, Serialize)]
@@ -111,10 +111,12 @@ pub async fn transcribe_short(
         })
         .inspect_err(|error| record_http_error(&state, error))?;
     let inference_started_at = Instant::now();
-    let result = run_blocking_inference_with_timeout(
+    let result = run_observed_blocking_inference_with_timeout(
         state.offline_engine.clone(),
         request,
         state.short_inference_timeout,
+        state.metrics.clone(),
+        "short",
     )
     .await;
     let inference_elapsed = inference_started_at.elapsed();

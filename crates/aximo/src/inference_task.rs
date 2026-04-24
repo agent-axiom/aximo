@@ -4,7 +4,7 @@ use aximo_core::{ShortAudioRequest, ShortAudioResult};
 use aximo_inference::engine::InferenceError;
 use thiserror::Error;
 
-use crate::engine_runtime::EngineRuntime;
+use crate::{engine_runtime::EngineRuntime, metrics::Metrics};
 
 #[derive(Debug, Error)]
 pub enum BlockingInferenceError {
@@ -12,6 +12,33 @@ pub enum BlockingInferenceError {
     Timeout { timeout_ms: u64 },
     #[error(transparent)]
     Inference(#[from] InferenceError),
+}
+
+#[derive(Clone)]
+struct BlockingInferenceObserver {
+    metrics: Metrics,
+    kind: &'static str,
+}
+
+struct ActiveBlockingInferenceGuard {
+    metrics: Metrics,
+}
+
+impl ActiveBlockingInferenceGuard {
+    fn new(observer: &BlockingInferenceObserver) -> Self {
+        observer.metrics.inc_blocking_tasks_active();
+        observer.metrics.inc_model_executions_active();
+        Self {
+            metrics: observer.metrics.clone(),
+        }
+    }
+}
+
+impl Drop for ActiveBlockingInferenceGuard {
+    fn drop(&mut self) {
+        self.metrics.dec_model_executions_active();
+        self.metrics.dec_blocking_tasks_active();
+    }
 }
 
 pub async fn run_blocking_inference(
@@ -33,11 +60,47 @@ pub async fn run_blocking_inference_with_timeout(
     request: ShortAudioRequest,
     timeout_duration: Duration,
 ) -> Result<ShortAudioResult, BlockingInferenceError> {
+    run_blocking_inference_with_timeout_inner(runtime, request, timeout_duration, None).await
+}
+
+pub async fn run_observed_blocking_inference_with_timeout(
+    runtime: EngineRuntime,
+    request: ShortAudioRequest,
+    timeout_duration: Duration,
+    metrics: Metrics,
+    kind: &'static str,
+) -> Result<ShortAudioResult, BlockingInferenceError> {
+    run_blocking_inference_with_timeout_inner(
+        runtime,
+        request,
+        timeout_duration,
+        Some(BlockingInferenceObserver { metrics, kind }),
+    )
+    .await
+}
+
+async fn run_blocking_inference_with_timeout_inner(
+    runtime: EngineRuntime,
+    request: ShortAudioRequest,
+    timeout_duration: Duration,
+    observer: Option<BlockingInferenceObserver>,
+) -> Result<ShortAudioResult, BlockingInferenceError> {
     let timeout_ms = timeout_duration.as_millis().try_into().unwrap_or(u64::MAX);
+    let timeout_observer = observer.clone();
     let task = async move {
+        let model_wait_started_at = std::time::Instant::now();
         let permit = runtime.acquire_execution_permit().await;
+        if let Some(observer) = &observer {
+            observer
+                .metrics
+                .record_model_execution_wait(observer.kind, model_wait_started_at.elapsed());
+        }
         let engine = runtime.engine();
+        let active_observer = observer.clone();
         tokio::task::spawn_blocking(move || {
+            let _active_guard = active_observer
+                .as_ref()
+                .map(ActiveBlockingInferenceGuard::new);
             let _permit = permit;
             engine.transcribe_short(request)
         })
@@ -50,6 +113,11 @@ pub async fn run_blocking_inference_with_timeout(
 
     match tokio::time::timeout(timeout_duration, task).await {
         Ok(result) => result,
-        Err(_) => Err(BlockingInferenceError::Timeout { timeout_ms }),
+        Err(_) => {
+            if let Some(observer) = timeout_observer {
+                observer.metrics.record_inference_timeout(observer.kind);
+            }
+            Err(BlockingInferenceError::Timeout { timeout_ms })
+        }
     }
 }

@@ -50,9 +50,18 @@ async fn metrics_endpoint_reports_short_audio_observability_series() {
 
     assert!(metrics.contains(r#"aximo_http_requests_total{status="200",code="ok"} 1"#));
     assert!(metrics.contains("aximo_audio_body_bytes_total "));
+    assert!(metrics.contains("# HELP aximo_audio_decode_seconds Audio decode time in seconds."));
+    assert!(metrics.contains("# TYPE aximo_audio_decode_seconds summary"));
     assert!(metrics.contains("aximo_audio_decode_seconds_sum "));
+    assert!(metrics.contains("aximo_audio_decode_seconds_count 1"));
     assert!(metrics.contains("aximo_audio_duration_seconds_sum "));
+    assert!(metrics.contains("aximo_audio_duration_seconds_count 1"));
+    assert!(metrics.contains(r#"aximo_model_execution_wait_seconds_count{kind="short"} 1"#));
     assert!(metrics.contains(r#"aximo_inference_seconds_sum{kind="short"} "#));
+    assert!(metrics.contains(r#"aximo_inference_seconds_count{kind="short"} 1"#));
     assert!(metrics.contains(r#"aximo_rtf_sum{kind="short"} "#));
+    assert!(metrics.contains(r#"aximo_rtf_count{kind="short"} 1"#));
+    assert!(metrics.contains("aximo_blocking_tasks_active 0"));
+    assert!(metrics.contains("aximo_model_executions_active 0"));
     assert!(metrics.contains("aximo_ws_sessions_active "));
 }
