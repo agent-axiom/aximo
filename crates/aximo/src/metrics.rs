@@ -221,6 +221,7 @@ impl Metrics {
         .expect("write metrics");
         writeln!(output, "# TYPE aximo_http_requests_total counter").expect("write metrics");
         for ((status, code), value) in &state.http_requests_total {
+            let code = escape_label_value(code);
             writeln!(
                 output,
                 "aximo_http_requests_total{{status=\"{status}\",code=\"{code}\"}} {value}"
@@ -235,6 +236,7 @@ impl Metrics {
         .expect("write metrics");
         writeln!(output, "# TYPE aximo_errors_total counter").expect("write metrics");
         for (code, value) in &state.errors_total {
+            let code = escape_label_value(code);
             writeln!(output, "aximo_errors_total{{code=\"{code}\"}} {value}")
                 .expect("write metrics");
         }
@@ -313,6 +315,7 @@ impl Metrics {
         .expect("write metrics");
         writeln!(output, "# TYPE aximo_inference_timeouts_total counter").expect("write metrics");
         for (kind, value) in &state.inference_timeouts_total {
+            let kind = escape_label_value(kind);
             writeln!(
                 output,
                 "aximo_inference_timeouts_total{{kind=\"{kind}\"}} {value}"
@@ -455,11 +458,12 @@ fn write_labelled_histogram(
     writeln!(output, "# HELP {name} {help}").expect("write metrics");
     writeln!(output, "# TYPE {name} histogram").expect("write metrics");
     for (kind, count) in counts {
+        let escaped_kind = escape_label_value(kind);
         let bucket_counts = buckets.get(kind).map_or(&[][..], Vec::as_slice);
         for (index, boundary) in boundaries.iter().enumerate() {
             writeln!(
                 output,
-                r#"{name}_bucket{{kind="{kind}",le="{}"}} {}"#,
+                r#"{name}_bucket{{kind="{escaped_kind}",le="{}"}} {}"#,
                 format_bucket(*boundary),
                 bucket_counts.get(index).copied().unwrap_or(0)
             )
@@ -467,17 +471,31 @@ fn write_labelled_histogram(
         }
         writeln!(
             output,
-            r#"{name}_bucket{{kind="{kind}",le="+Inf"}} {count}"#
+            r#"{name}_bucket{{kind="{escaped_kind}",le="+Inf"}} {count}"#
         )
         .expect("write metrics");
         writeln!(
             output,
-            r#"{name}_sum{{kind="{kind}"}} {:.9}"#,
+            r#"{name}_sum{{kind="{escaped_kind}"}} {:.9}"#,
             sums.get(kind).copied().unwrap_or_default()
         )
         .expect("write metrics");
-        writeln!(output, r#"{name}_count{{kind="{kind}"}} {count}"#).expect("write metrics");
+        writeln!(output, r#"{name}_count{{kind="{escaped_kind}"}} {count}"#)
+            .expect("write metrics");
     }
+}
+
+fn escape_label_value(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len());
+    for character in value.chars() {
+        match character {
+            '\\' => escaped.push_str(r"\\"),
+            '"' => escaped.push_str(r#"\""#),
+            '\n' => escaped.push_str(r"\n"),
+            _ => escaped.push(character),
+        }
+    }
+    escaped
 }
 
 fn format_bucket(boundary: f64) -> String {
@@ -522,10 +540,11 @@ pub async fn metrics(State(state): State<AppState>) -> Response {
     .expect("write metrics");
     writeln!(body, "# TYPE aximo_runtime_component_degraded gauge").expect("write metrics");
     for component in &readiness.components {
+        let component_name = escape_label_value(&component.component);
         writeln!(
             body,
             "aximo_runtime_component_degraded{{component=\"{}\"}} {}",
-            component.component,
+            component_name,
             u8::from(component.status == "degraded")
         )
         .expect("write metrics");
@@ -541,10 +560,11 @@ pub async fn metrics(State(state): State<AppState>) -> Response {
     )
     .expect("write metrics");
     for component in &readiness.components {
+        let component_name = escape_label_value(&component.component);
         writeln!(
             body,
             "aximo_runtime_component_consecutive_failures{{component=\"{}\"}} {}",
-            component.component, component.consecutive_failures
+            component_name, component.consecutive_failures
         )
         .expect("write metrics");
     }

@@ -78,3 +78,46 @@ async fn metrics_endpoint_reports_short_audio_observability_series() {
         .contains(r#"aximo_runtime_component_consecutive_failures{component="short:parakeet"} 0"#));
     assert!(metrics.contains("aximo_ws_sessions_active "));
 }
+
+#[tokio::test]
+async fn metrics_endpoint_escapes_component_label_values() {
+    let mut settings = aximo::config::Settings::default();
+    settings.inference.default_offline_engine = "bad \"engine\"\\name".to_string();
+    let app = aximo::app::build_app(
+        settings,
+        std::sync::Arc::new(aximo_inference::engine::FakeEngine),
+        std::sync::Arc::new(aximo_inference::engine::FakeEngine),
+    );
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/transcriptions")
+                .header("content-type", "audio/wav")
+                .body(Body::from(fixture_bytes("tone-16k-mono.wav")))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let metrics_response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/metrics")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = to_bytes(metrics_response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let metrics = String::from_utf8(body.to_vec()).unwrap();
+
+    assert!(metrics
+        .contains(r#"aximo_runtime_component_degraded{component="short:bad \"engine\"\\name"} 0"#));
+}
