@@ -31,3 +31,6 @@ max_realtime_session_duration_ms = 60000
 realtime_partial_min_interval_ms = 300
 realtime_partial_min_chunk_bytes = 9600
 realtime_event_channel_capacity = 64
+short_inference_timeout_ms = 120000
+realtime_partial_timeout_ms = 5000
+realtime_final_timeout_ms = 120000

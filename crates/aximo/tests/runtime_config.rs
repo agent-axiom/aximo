@@ -44,6 +44,9 @@ max_realtime_session_duration_ms = 30000
 realtime_partial_min_interval_ms = 450
 realtime_partial_min_chunk_bytes = 12000
 realtime_event_channel_capacity = 32
+short_inference_timeout_ms = 90000
+realtime_partial_timeout_ms = 4000
+realtime_final_timeout_ms = 95000
 "#,
     )
     .unwrap();
@@ -65,6 +68,9 @@ realtime_event_channel_capacity = 32
     assert_eq!(settings.limits.realtime_partial_min_interval_ms, 450);
     assert_eq!(settings.limits.realtime_partial_min_chunk_bytes, 12000);
     assert_eq!(settings.limits.realtime_event_channel_capacity, 32);
+    assert_eq!(settings.limits.short_inference_timeout_ms, 90000);
+    assert_eq!(settings.limits.realtime_partial_timeout_ms, 4000);
+    assert_eq!(settings.limits.realtime_final_timeout_ms, 95000);
 }
 
 #[test]
@@ -145,4 +151,7 @@ max_realtime_sessions = 2
     assert_eq!(settings.limits.realtime_partial_min_interval_ms, 300);
     assert_eq!(settings.limits.realtime_partial_min_chunk_bytes, 9_600);
     assert_eq!(settings.limits.realtime_event_channel_capacity, 64);
+    assert_eq!(settings.limits.short_inference_timeout_ms, 120_000);
+    assert_eq!(settings.limits.realtime_partial_timeout_ms, 5_000);
+    assert_eq!(settings.limits.realtime_final_timeout_ms, 120_000);
 }

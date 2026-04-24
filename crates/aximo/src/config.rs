@@ -84,6 +84,15 @@ impl Settings {
         if let Some(value) = env_parse("AXIMO_REALTIME_EVENT_CHANNEL_CAPACITY")? {
             self.limits.realtime_event_channel_capacity = value;
         }
+        if let Some(value) = env_parse("AXIMO_SHORT_INFERENCE_TIMEOUT_MS")? {
+            self.limits.short_inference_timeout_ms = value;
+        }
+        if let Some(value) = env_parse("AXIMO_REALTIME_PARTIAL_TIMEOUT_MS")? {
+            self.limits.realtime_partial_timeout_ms = value;
+        }
+        if let Some(value) = env_parse("AXIMO_REALTIME_FINAL_TIMEOUT_MS")? {
+            self.limits.realtime_final_timeout_ms = value;
+        }
 
         Ok(())
     }
@@ -144,6 +153,9 @@ pub struct LimitSettings {
     pub realtime_partial_min_interval_ms: u64,
     pub realtime_partial_min_chunk_bytes: usize,
     pub realtime_event_channel_capacity: usize,
+    pub short_inference_timeout_ms: u64,
+    pub realtime_partial_timeout_ms: u64,
+    pub realtime_final_timeout_ms: u64,
 }
 
 impl Default for LimitSettings {
@@ -162,6 +174,9 @@ impl Default for LimitSettings {
             realtime_partial_min_interval_ms: 300,
             realtime_partial_min_chunk_bytes: 9_600,
             realtime_event_channel_capacity: 64,
+            short_inference_timeout_ms: 120_000,
+            realtime_partial_timeout_ms: 5_000,
+            realtime_final_timeout_ms: 120_000,
         }
     }
 }
@@ -234,6 +249,9 @@ mod tests {
         "AXIMO_REALTIME_PARTIAL_MIN_INTERVAL_MS",
         "AXIMO_REALTIME_PARTIAL_MIN_CHUNK_BYTES",
         "AXIMO_REALTIME_EVENT_CHANNEL_CAPACITY",
+        "AXIMO_SHORT_INFERENCE_TIMEOUT_MS",
+        "AXIMO_REALTIME_PARTIAL_TIMEOUT_MS",
+        "AXIMO_REALTIME_FINAL_TIMEOUT_MS",
     ];
 
     fn env_lock() -> &'static Mutex<()> {
@@ -339,6 +357,9 @@ max_realtime_session_duration_ms = 2000
 realtime_partial_min_interval_ms = 300
 realtime_partial_min_chunk_bytes = 400
 realtime_event_channel_capacity = 32
+short_inference_timeout_ms = 1000
+realtime_partial_timeout_ms = 2000
+realtime_final_timeout_ms = 3000
 "#,
         )
         .unwrap();
@@ -362,6 +383,9 @@ realtime_event_channel_capacity = 32
         std::env::set_var("AXIMO_REALTIME_PARTIAL_MIN_INTERVAL_MS", "150");
         std::env::set_var("AXIMO_REALTIME_PARTIAL_MIN_CHUNK_BYTES", "8192");
         std::env::set_var("AXIMO_REALTIME_EVENT_CHANNEL_CAPACITY", "16");
+        std::env::set_var("AXIMO_SHORT_INFERENCE_TIMEOUT_MS", "4000");
+        std::env::set_var("AXIMO_REALTIME_PARTIAL_TIMEOUT_MS", "5000");
+        std::env::set_var("AXIMO_REALTIME_FINAL_TIMEOUT_MS", "6000");
 
         let settings = Settings::load().unwrap();
 
@@ -383,6 +407,9 @@ realtime_event_channel_capacity = 32
         assert_eq!(settings.limits.realtime_partial_min_interval_ms, 150);
         assert_eq!(settings.limits.realtime_partial_min_chunk_bytes, 8192);
         assert_eq!(settings.limits.realtime_event_channel_capacity, 16);
+        assert_eq!(settings.limits.short_inference_timeout_ms, 4000);
+        assert_eq!(settings.limits.realtime_partial_timeout_ms, 5000);
+        assert_eq!(settings.limits.realtime_final_timeout_ms, 6000);
 
         clear_overlay_env();
     }

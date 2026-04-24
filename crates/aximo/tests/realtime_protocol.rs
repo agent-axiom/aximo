@@ -147,6 +147,20 @@ impl aximo_inference::engine::SpeechEngine for BlockingRecordingEngine {
     }
 }
 
+struct SlowEngine {
+    sleep_for: Duration,
+}
+
+impl aximo_inference::engine::SpeechEngine for SlowEngine {
+    fn transcribe_short(
+        &self,
+        _request: aximo_core::ShortAudioRequest,
+    ) -> Result<aximo_core::ShortAudioResult, aximo_inference::engine::InferenceError> {
+        std::thread::sleep(self.sleep_for);
+        Ok(aximo_core::ShortAudioResult::new("slow", "slow"))
+    }
+}
+
 async fn spawn_test_server() -> (String, tokio::task::JoinHandle<()>) {
     let app = aximo::app::build_test_app().await;
     spawn_server_with_app(app).await
@@ -196,6 +210,40 @@ async fn websocket_session_emits_started_and_final_events() {
     assert_eq!(started["event"], "session_started");
     assert_eq!(final_event["event"], "final");
     assert_eq!(final_event["text"], "hello world");
+
+    server.abort();
+}
+
+#[tokio::test]
+async fn websocket_final_emits_timeout_error_when_inference_exceeds_budget() {
+    let mut settings = aximo::config::Settings::default();
+    settings.limits.realtime_final_timeout_ms = 5;
+    let app = aximo::app::build_app(
+        settings,
+        Arc::new(aximo_inference::engine::FakeEngine),
+        Arc::new(SlowEngine {
+            sleep_for: Duration::from_millis(50),
+        }),
+    );
+    let (url, server) = spawn_server_with_app(app).await;
+    let (mut socket, _) = connect_async(url).await.unwrap();
+
+    socket
+        .send(Message::Text(r#"{"event":"start"}"#.into()))
+        .await
+        .unwrap();
+    socket
+        .send(Message::Text(r#"{"event":"stop"}"#.into()))
+        .await
+        .unwrap();
+
+    let started = next_event(&mut socket).await;
+    let error = next_event(&mut socket).await;
+
+    assert_eq!(started["event"], "session_started");
+    assert_eq!(error["event"], "error");
+    assert_eq!(error["code"], "inference_timeout");
+    assert_eq!(error["reason"], "realtime final inference timed out");
 
     server.abort();
 }
@@ -379,6 +427,42 @@ async fn websocket_session_emits_partial_after_audio_chunk() {
     let final_event = next_event(&mut socket).await;
 
     assert_eq!(final_event["event"], "final");
+
+    server.abort();
+}
+
+#[tokio::test]
+async fn websocket_partial_emits_timeout_error_when_inference_exceeds_budget() {
+    let mut settings = aximo::config::Settings::default();
+    settings.limits.realtime_partial_min_chunk_bytes = 1;
+    settings.limits.realtime_partial_min_interval_ms = 0;
+    settings.limits.realtime_partial_timeout_ms = 5;
+    let app = aximo::app::build_app(
+        settings,
+        Arc::new(aximo_inference::engine::FakeEngine),
+        Arc::new(SlowEngine {
+            sleep_for: Duration::from_millis(50),
+        }),
+    );
+    let (url, server) = spawn_server_with_app(app).await;
+    let (mut socket, _) = connect_async(url).await.unwrap();
+
+    socket
+        .send(Message::Text(r#"{"event":"start"}"#.into()))
+        .await
+        .unwrap();
+    socket
+        .send(Message::Binary(vec![0_u8; 3_200].into()))
+        .await
+        .unwrap();
+
+    let started = next_event(&mut socket).await;
+    let error = next_event(&mut socket).await;
+
+    assert_eq!(started["event"], "session_started");
+    assert_eq!(error["event"], "error");
+    assert_eq!(error["code"], "inference_timeout");
+    assert_eq!(error["reason"], "realtime partial inference timed out");
 
     server.abort();
 }

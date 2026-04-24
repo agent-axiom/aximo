@@ -10,7 +10,10 @@ use axum::{
 };
 use serde::Serialize;
 
-use crate::{app::AppState, inference_task::run_blocking_inference};
+use crate::{
+    app::AppState,
+    inference_task::{run_blocking_inference_with_timeout, BlockingInferenceError},
+};
 
 #[derive(Debug, Serialize)]
 pub struct ErrorResponseBody {
@@ -86,10 +89,14 @@ pub async fn transcribe_short(
         )
     })?;
 
-    run_blocking_inference(state.offline_engine.clone(), request)
+    run_blocking_inference_with_timeout(
+        state.offline_engine.clone(),
+        request,
+        state.short_inference_timeout,
+    )
         .await
         .map(Json)
-        .map_err(map_inference_error)
+        .map_err(|error| map_blocking_inference_error(error, "short-audio inference timed out"))
 }
 
 fn map_body_rejection(error: BytesRejection) -> HttpError {
@@ -155,5 +162,16 @@ fn map_inference_error(error: InferenceError) -> HttpError {
             "inference_runtime_error",
             format!("runtime inference error: {message}"),
         ),
+    }
+}
+
+fn map_blocking_inference_error(error: BlockingInferenceError, timeout_message: &str) -> HttpError {
+    match error {
+        BlockingInferenceError::Timeout { .. } => HttpError::new(
+            StatusCode::GATEWAY_TIMEOUT,
+            "inference_timeout",
+            timeout_message,
+        ),
+        BlockingInferenceError::Inference(error) => map_inference_error(error),
     }
 }

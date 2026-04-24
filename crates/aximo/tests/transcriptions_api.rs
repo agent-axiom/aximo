@@ -5,6 +5,7 @@ use axum::{
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::{mpsc, Mutex};
+use std::time::Duration;
 use tokio::sync::oneshot;
 
 use serde_json::Value;
@@ -55,6 +56,20 @@ struct StaticErrorEngine {
 impl StaticErrorEngine {
     fn new(error: aximo_inference::engine::InferenceError) -> Self {
         Self { error }
+    }
+}
+
+struct SlowEngine {
+    sleep_for: Duration,
+}
+
+impl aximo_inference::engine::SpeechEngine for SlowEngine {
+    fn transcribe_short(
+        &self,
+        _request: aximo_core::ShortAudioRequest,
+    ) -> Result<aximo_core::ShortAudioResult, aximo_inference::engine::InferenceError> {
+        std::thread::sleep(self.sleep_for);
+        Ok(aximo_core::ShortAudioResult::new("slow", "slow"))
     }
 }
 
@@ -321,6 +336,37 @@ async fn transcription_endpoint_returns_structured_inference_capacity_error() {
 
     let first_response = first_handle.await.unwrap();
     assert_eq!(first_response.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn transcription_endpoint_returns_gateway_timeout_when_inference_exceeds_budget() {
+    let mut settings = aximo::config::Settings::default();
+    settings.limits.short_inference_timeout_ms = 5;
+    let app = aximo::app::build_app(
+        settings,
+        Arc::new(SlowEngine {
+            sleep_for: Duration::from_millis(50),
+        }),
+        Arc::new(aximo_inference::engine::FakeEngine),
+    );
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/transcriptions")
+                .header("content-type", "audio/wav")
+                .body(Body::from(fixture_bytes("tone-16k-mono.wav")))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::GATEWAY_TIMEOUT);
+
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let json: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["code"], "inference_timeout");
+    assert_eq!(json["message"], "short-audio inference timed out");
 }
 
 #[tokio::test]

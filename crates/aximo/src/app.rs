@@ -17,6 +17,9 @@ pub struct AppState {
     pub realtime_session_limits: RealtimeSessionLimits,
     pub realtime_partial_limits: RealtimePartialLimits,
     pub realtime_event_channel_capacity: usize,
+    pub short_inference_timeout: std::time::Duration,
+    pub realtime_partial_timeout: std::time::Duration,
+    pub realtime_final_timeout: std::time::Duration,
 }
 
 pub fn build_app(
@@ -53,6 +56,15 @@ pub fn build_app(
             min_chunk_bytes: settings.limits.realtime_partial_min_chunk_bytes,
         },
         realtime_event_channel_capacity: settings.limits.realtime_event_channel_capacity.max(1),
+        short_inference_timeout: std::time::Duration::from_millis(
+            settings.limits.short_inference_timeout_ms,
+        ),
+        realtime_partial_timeout: std::time::Duration::from_millis(
+            settings.limits.realtime_partial_timeout_ms,
+        ),
+        realtime_final_timeout: std::time::Duration::from_millis(
+            settings.limits.realtime_final_timeout_ms,
+        ),
     };
 
     Router::new()

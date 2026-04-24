@@ -11,7 +11,7 @@ use tokio::sync::mpsc;
 
 use crate::{
     app::AppState,
-    inference_task::run_blocking_inference,
+    inference_task::{run_blocking_inference_with_timeout, BlockingInferenceError},
     ws::protocol::{ClientEvent, ServerEvent},
 };
 
@@ -110,16 +110,20 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                             let _inference_permit =
                                 state.scheduler.acquire_realtime_inference().await;
 
-                            match run_blocking_inference(state.realtime_engine.clone(), request)
-                                .await
+                            match run_blocking_inference_with_timeout(
+                                state.realtime_engine.clone(),
+                                request,
+                                state.realtime_final_timeout,
+                            )
+                            .await
                             {
                                 Ok(result) => {
                                     queue_or_break!(ServerEvent::final_text(result.text));
                                 }
                                 Err(error) => {
-                                    queue_or_break!(ServerEvent::error(
-                                        "inference_failed",
-                                        error.to_string()
+                                    queue_or_break!(map_realtime_inference_error(
+                                        error,
+                                        "realtime final inference timed out"
                                     ),);
                                 }
                             }
@@ -220,8 +224,12 @@ fn spawn_partial_inference(
                 timestamps: false,
             };
 
-            let inference_result =
-                run_blocking_inference(state.realtime_engine.clone(), request).await;
+            let inference_result = run_blocking_inference_with_timeout(
+                state.realtime_engine.clone(),
+                request,
+                state.realtime_partial_timeout,
+            )
+            .await;
             let follow_up = match state.session_manager.complete_partial(&session_id) {
                 Ok(follow_up) => follow_up,
                 Err(SessionError::MissingSession) => break,
@@ -238,7 +246,10 @@ fn spawn_partial_inference(
                 Err(error) => {
                     if !queue_event(
                         &event_tx,
-                        ServerEvent::error("inference_failed", error.to_string()),
+                        map_realtime_inference_error(
+                            error,
+                            "realtime partial inference timed out",
+                        ),
                     ) {
                         let _ = overflow_tx.try_send(());
                         break;
@@ -255,6 +266,20 @@ fn spawn_partial_inference(
 
 fn queue_event(event_tx: &mpsc::Sender<ServerEvent>, event: ServerEvent) -> bool {
     event_tx.try_send(event).is_ok()
+}
+
+fn map_realtime_inference_error(
+    error: BlockingInferenceError,
+    timeout_reason: &'static str,
+) -> ServerEvent {
+    match error {
+        BlockingInferenceError::Timeout { .. } => {
+            ServerEvent::error("inference_timeout", timeout_reason)
+        }
+        BlockingInferenceError::Inference(error) => {
+            ServerEvent::error("inference_failed", error.to_string())
+        }
+    }
 }
 
 fn cleanup_active_session(state: &AppState, active_session_id: &mut Option<String>) {
