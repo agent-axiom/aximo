@@ -2,7 +2,10 @@ use std::io::Cursor;
 
 use hound::{SampleFormat, WavReader};
 
-use crate::{decode_container_with_sample_limit, AudioError, DecodedAudio};
+use crate::{
+    decode_container_with_sample_limit, parse_audio_media_type, AudioError, AudioMediaType,
+    DecodedAudio,
+};
 
 const TARGET_SAMPLE_RATE: u32 = 16_000;
 const PCM_BYTES_PER_SAMPLE: usize = 2;
@@ -39,25 +42,27 @@ pub fn prepare_short_audio_with_limits(
     content_type: &str,
     limits: ShortAudioLimits,
 ) -> Result<PreparedAudio, AudioError> {
-    if content_type.contains("pcm") || content_type.contains("octet-stream") {
-        validate_raw_pcm(bytes, limits)?;
-        return Ok(PreparedAudio {
-            audio_bytes: bytes.to_vec(),
-            content_type: "audio/pcm",
-        });
-    }
+    let media_type = parse_audio_media_type(content_type)?;
 
-    if content_type.contains("wav") {
-        let wav_info = wav_info(bytes)?;
-        if wav_info.is_passthrough {
-            validate_duration_ms(wav_info.duration_ms, limits)?;
+    match media_type {
+        AudioMediaType::RawPcm => {
+            validate_raw_pcm(bytes, limits)?;
             return Ok(PreparedAudio {
                 audio_bytes: bytes.to_vec(),
-                content_type: "audio/wav",
+                content_type: AudioMediaType::RawPcm.canonical_content_type(),
             });
         }
-    } else if !is_supported_container(content_type) {
-        return Err(AudioError::UnsupportedContentType(content_type.to_string()));
+        AudioMediaType::Wav => {
+            let wav_info = wav_info(bytes)?;
+            if wav_info.is_passthrough {
+                validate_duration_ms(wav_info.duration_ms, limits)?;
+                return Ok(PreparedAudio {
+                    audio_bytes: bytes.to_vec(),
+                    content_type: AudioMediaType::Wav.canonical_content_type(),
+                });
+            }
+        }
+        AudioMediaType::Mp3 | AudioMediaType::Flac | AudioMediaType::Mp4 => {}
     }
 
     let decoded =
@@ -118,16 +123,6 @@ fn wav_info(bytes: &[u8]) -> Result<WavInfo, AudioError> {
             && spec.sample_format == SampleFormat::Int,
         duration_ms: frames.saturating_mul(1000) / sample_rate,
     })
-}
-
-fn is_supported_container(content_type: &str) -> bool {
-    content_type.contains("wav")
-        || content_type.contains("mpeg")
-        || content_type.contains("mp3")
-        || content_type.contains("flac")
-        || content_type.contains("mp4")
-        || content_type.contains("m4a")
-        || content_type.contains("aac")
 }
 
 fn normalize_decoded_audio(decoded: DecodedAudio) -> Vec<u8> {

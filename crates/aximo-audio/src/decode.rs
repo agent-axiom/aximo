@@ -7,6 +7,8 @@ use symphonia::core::{
 use symphonia::default::{get_codecs, get_probe};
 use thiserror::Error;
 
+use crate::parse_audio_media_type;
+
 #[derive(Debug, Error)]
 pub enum AudioError {
     #[error("unsupported content type {0}")]
@@ -36,9 +38,7 @@ pub fn decode_container_with_sample_limit(
     max_decoded_samples: usize,
 ) -> Result<DecodedAudio, AudioError> {
     let mut hint = Hint::new();
-    if let Some(extension) = extension_hint(content_type) {
-        hint.with_extension(extension);
-    }
+    hint.with_extension(extension_hint(content_type)?);
 
     let media_source =
         MediaSourceStream::new(Box::new(Cursor::new(bytes.to_vec())), Default::default());
@@ -120,21 +120,11 @@ pub fn decode_container_with_sample_limit(
     })
 }
 
-fn extension_hint(content_type: &str) -> Option<&'static str> {
-    if content_type.contains("wav") {
-        Some("wav")
-    } else if content_type.contains("mpeg") || content_type.contains("mp3") {
-        Some("mp3")
-    } else if content_type.contains("flac") {
-        Some("flac")
-    } else if content_type.contains("mp4")
-        || content_type.contains("m4a")
-        || content_type.contains("aac")
-    {
-        Some("m4a")
-    } else {
-        None
-    }
+fn extension_hint(content_type: &str) -> Result<&'static str, AudioError> {
+    let media_type = parse_audio_media_type(content_type)?;
+    media_type.extension_hint().ok_or_else(|| {
+        AudioError::UnsupportedContentType(media_type.canonical_content_type().to_string())
+    })
 }
 
 #[cfg(test)]
@@ -150,11 +140,18 @@ mod tests {
 
     #[test]
     fn extension_hint_maps_supported_content_types() {
-        assert_eq!(extension_hint("audio/wav"), Some("wav"));
-        assert_eq!(extension_hint("audio/mpeg"), Some("mp3"));
-        assert_eq!(extension_hint("audio/flac"), Some("flac"));
-        assert_eq!(extension_hint("audio/mp4"), Some("m4a"));
-        assert_eq!(extension_hint("application/json"), None);
+        assert_eq!(extension_hint("audio/wav").unwrap(), "wav");
+        assert_eq!(extension_hint("audio/mpeg").unwrap(), "mp3");
+        assert_eq!(extension_hint("audio/flac").unwrap(), "flac");
+        assert_eq!(extension_hint("audio/mp4").unwrap(), "m4a");
+        assert!(matches!(
+            extension_hint("application/json"),
+            Err(AudioError::UnsupportedContentType(_))
+        ));
+        assert!(matches!(
+            extension_hint("audio/pcm"),
+            Err(AudioError::UnsupportedContentType(_))
+        ));
     }
 
     #[test]

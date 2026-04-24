@@ -133,6 +133,24 @@ async fn transcription_endpoint_accepts_mp3_input() {
 }
 
 #[tokio::test]
+async fn transcription_endpoint_accepts_wav_alias_with_parameters() {
+    let app = aximo::app::build_test_app().await;
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/transcriptions")
+                .header("content-type", "audio/x-wav; codecs=1")
+                .body(Body::from(fixture_bytes("tone-16k-mono.wav")))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
+#[tokio::test]
 async fn transcription_endpoint_accepts_flac_input() {
     let app = aximo::app::build_test_app().await;
     let response = app
@@ -362,6 +380,29 @@ async fn transcription_endpoint_returns_unsupported_media_type_for_unknown_conte
 
     assert_eq!(json["code"], "unsupported_media_type");
     assert_eq!(json["message"], "unsupported media type: application/json");
+}
+
+#[tokio::test]
+async fn transcription_endpoint_returns_unsupported_media_type_for_missing_content_type() {
+    let app = aximo::app::build_test_app().await;
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/transcriptions")
+                .body(Body::from(vec![0_u8; 4]))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::UNSUPPORTED_MEDIA_TYPE);
+
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let json: Value = serde_json::from_slice(&body).unwrap();
+
+    assert_eq!(json["code"], "unsupported_media_type");
+    assert_eq!(json["message"], "unsupported media type: missing content type");
 }
 
 #[tokio::test]

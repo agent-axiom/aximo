@@ -61,7 +61,7 @@ pub async fn transcribe_short(
     let content_type = headers
         .get(axum::http::header::CONTENT_TYPE)
         .and_then(|value| value.to_str().ok())
-        .unwrap_or("application/octet-stream")
+        .unwrap_or_default()
         .to_string();
     let prepared_audio = aximo_audio::prepare_short_audio_with_limits(
         body.as_ref(),

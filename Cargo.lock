@@ -95,6 +95,7 @@ dependencies = [
 name = "aximo-inference"
 version = "0.1.0"
 dependencies = [
+ "aximo-audio",
  "aximo-core",
  "hound",
  "tempfile",

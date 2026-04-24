@@ -6,6 +6,7 @@ use std::{
     time::Instant,
 };
 
+use aximo_audio::{parse_audio_media_type, AudioError, AudioMediaType};
 use aximo_core::{ShortAudioRequest, ShortAudioResult};
 use hound::{SampleFormat, WavSpec, WavWriter};
 use tempfile::NamedTempFile;
@@ -165,21 +166,21 @@ fn wav_duration_ms(path: &Path) -> Result<u64, InferenceError> {
 fn materialize_as_wav(request: &ShortAudioRequest) -> Result<NamedTempFile, InferenceError> {
     let mut file = NamedTempFile::new().map_err(io_error)?;
 
-    if request.content_type.contains("wav") {
-        file.write_all(&request.audio_bytes).map_err(io_error)?;
-        file.flush().map_err(io_error)?;
-        return Ok(file);
+    match parse_audio_media_type(&request.content_type).map_err(map_audio_media_error)? {
+        AudioMediaType::Wav => {
+            file.write_all(&request.audio_bytes).map_err(io_error)?;
+            file.flush().map_err(io_error)?;
+            Ok(file)
+        }
+        AudioMediaType::RawPcm => {
+            write_pcm_as_wav(file.path(), &request.audio_bytes)?;
+            Ok(file)
+        }
+        media_type => Err(InferenceError::InvalidAudio(format!(
+            "unsupported content type {}",
+            media_type.canonical_content_type()
+        ))),
     }
-
-    if request.content_type.contains("pcm") || request.content_type.contains("octet-stream") {
-        write_pcm_as_wav(file.path(), &request.audio_bytes)?;
-        return Ok(file);
-    }
-
-    Err(InferenceError::InvalidAudio(format!(
-        "unsupported content type {}",
-        request.content_type
-    )))
 }
 
 fn write_pcm_as_wav(path: &Path, bytes: &[u8]) -> Result<(), InferenceError> {
@@ -208,6 +209,17 @@ fn write_pcm_as_wav(path: &Path, bytes: &[u8]) -> Result<(), InferenceError> {
 
 fn io_error(error: impl ToString) -> InferenceError {
     InferenceError::Runtime(error.to_string())
+}
+
+fn map_audio_media_error(error: AudioError) -> InferenceError {
+    match error {
+        AudioError::UnsupportedContentType(message) => {
+            InferenceError::InvalidAudio(format!("unsupported content type {message}"))
+        }
+        AudioError::TooLarge(message) => InferenceError::InvalidAudio(message),
+        AudioError::InvalidPcm(message) => InferenceError::InvalidAudio(message),
+        AudioError::Decode(message) => InferenceError::InvalidAudio(message),
+    }
 }
 
 #[cfg(test)]
