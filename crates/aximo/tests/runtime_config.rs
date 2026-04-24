@@ -47,6 +47,7 @@ realtime_event_channel_capacity = 32
 short_inference_timeout_ms = 90000
 realtime_partial_timeout_ms = 4000
 realtime_final_timeout_ms = 95000
+runtime_degrade_after_consecutive_failures = 6
 "#,
     )
     .unwrap();
@@ -71,6 +72,10 @@ realtime_final_timeout_ms = 95000
     assert_eq!(settings.limits.short_inference_timeout_ms, 90000);
     assert_eq!(settings.limits.realtime_partial_timeout_ms, 4000);
     assert_eq!(settings.limits.realtime_final_timeout_ms, 95000);
+    assert_eq!(
+        settings.limits.runtime_degrade_after_consecutive_failures,
+        6
+    );
 }
 
 #[test]
@@ -154,4 +159,8 @@ max_realtime_sessions = 2
     assert_eq!(settings.limits.short_inference_timeout_ms, 120_000);
     assert_eq!(settings.limits.realtime_partial_timeout_ms, 5_000);
     assert_eq!(settings.limits.realtime_final_timeout_ms, 120_000);
+    assert_eq!(
+        settings.limits.runtime_degrade_after_consecutive_failures,
+        3
+    );
 }

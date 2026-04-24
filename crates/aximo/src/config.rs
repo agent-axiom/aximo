@@ -93,6 +93,9 @@ impl Settings {
         if let Some(value) = env_parse("AXIMO_REALTIME_FINAL_TIMEOUT_MS")? {
             self.limits.realtime_final_timeout_ms = value;
         }
+        if let Some(value) = env_parse("AXIMO_RUNTIME_DEGRADE_AFTER_CONSECUTIVE_FAILURES")? {
+            self.limits.runtime_degrade_after_consecutive_failures = value;
+        }
 
         Ok(())
     }
@@ -156,6 +159,7 @@ pub struct LimitSettings {
     pub short_inference_timeout_ms: u64,
     pub realtime_partial_timeout_ms: u64,
     pub realtime_final_timeout_ms: u64,
+    pub runtime_degrade_after_consecutive_failures: u64,
 }
 
 impl Default for LimitSettings {
@@ -177,6 +181,7 @@ impl Default for LimitSettings {
             short_inference_timeout_ms: 120_000,
             realtime_partial_timeout_ms: 5_000,
             realtime_final_timeout_ms: 120_000,
+            runtime_degrade_after_consecutive_failures: 3,
         }
     }
 }
@@ -252,6 +257,7 @@ mod tests {
         "AXIMO_SHORT_INFERENCE_TIMEOUT_MS",
         "AXIMO_REALTIME_PARTIAL_TIMEOUT_MS",
         "AXIMO_REALTIME_FINAL_TIMEOUT_MS",
+        "AXIMO_RUNTIME_DEGRADE_AFTER_CONSECUTIVE_FAILURES",
     ];
 
     fn env_lock() -> &'static Mutex<()> {
@@ -360,6 +366,7 @@ realtime_event_channel_capacity = 32
 short_inference_timeout_ms = 1000
 realtime_partial_timeout_ms = 2000
 realtime_final_timeout_ms = 3000
+runtime_degrade_after_consecutive_failures = 4
 "#,
         )
         .unwrap();
@@ -386,6 +393,7 @@ realtime_final_timeout_ms = 3000
         std::env::set_var("AXIMO_SHORT_INFERENCE_TIMEOUT_MS", "4000");
         std::env::set_var("AXIMO_REALTIME_PARTIAL_TIMEOUT_MS", "5000");
         std::env::set_var("AXIMO_REALTIME_FINAL_TIMEOUT_MS", "6000");
+        std::env::set_var("AXIMO_RUNTIME_DEGRADE_AFTER_CONSECUTIVE_FAILURES", "7");
 
         let settings = Settings::load().unwrap();
 
@@ -410,6 +418,10 @@ realtime_final_timeout_ms = 3000
         assert_eq!(settings.limits.short_inference_timeout_ms, 4000);
         assert_eq!(settings.limits.realtime_partial_timeout_ms, 5000);
         assert_eq!(settings.limits.realtime_final_timeout_ms, 6000);
+        assert_eq!(
+            settings.limits.runtime_degrade_after_consecutive_failures,
+            7
+        );
 
         clear_overlay_env();
     }

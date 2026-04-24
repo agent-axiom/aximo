@@ -129,10 +129,12 @@ pub async fn transcribe_short(
 
     match result {
         Ok(result) => {
+            state.runtime_health.record_success();
             state.metrics.record_http_response(200, "ok");
             Ok(Json(result))
         }
         Err(error) => {
+            record_inference_health(&state, "short", &error);
             let error = map_blocking_inference_error(error, "short-audio inference timed out");
             record_http_error(&state, &error);
             Err(error)
@@ -217,5 +219,22 @@ fn map_blocking_inference_error(error: BlockingInferenceError, timeout_message: 
             timeout_message,
         ),
         BlockingInferenceError::Inference(error) => map_inference_error(error),
+    }
+}
+
+fn record_inference_health(state: &AppState, kind: &'static str, error: &BlockingInferenceError) {
+    match error {
+        BlockingInferenceError::Timeout { .. } => state
+            .runtime_health
+            .record_failure(format!("{kind} inference timeout")),
+        BlockingInferenceError::Inference(InferenceError::Runtime(_)) => state
+            .runtime_health
+            .record_failure(format!("{kind} runtime inference error")),
+        BlockingInferenceError::Inference(InferenceError::Unavailable(_)) => state
+            .runtime_health
+            .record_failure(format!("{kind} engine unavailable")),
+        BlockingInferenceError::Inference(
+            InferenceError::InvalidAudio(_) | InferenceError::UnsupportedEngine(_),
+        ) => {}
     }
 }

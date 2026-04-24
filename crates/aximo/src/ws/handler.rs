@@ -1,6 +1,7 @@
 use std::time::{Duration, Instant};
 
 use aximo_core::{PartialSchedule, SessionError, ShortAudioRequest};
+use aximo_inference::engine::InferenceError;
 use axum::{
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
@@ -131,6 +132,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                             .await
                             {
                                 Ok(result) => {
+                                    state.runtime_health.record_success();
                                     state.metrics.record_inference(
                                         "realtime_final",
                                         wait_elapsed,
@@ -140,6 +142,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                                     queue_or_break!(ServerEvent::final_text(result.text));
                                 }
                                 Err(error) => {
+                                    record_inference_health(&state, "realtime_final", &error);
                                     state.metrics.record_inference(
                                         "realtime_final",
                                         wait_elapsed,
@@ -285,6 +288,7 @@ fn spawn_partial_inference(
 
             match inference_result {
                 Ok(result) => {
+                    state.runtime_health.record_success();
                     if !queue_event_or_overflow(
                         &state,
                         &event_tx,
@@ -296,6 +300,7 @@ fn spawn_partial_inference(
                     }
                 }
                 Err(error) => {
+                    record_inference_health(&state, "realtime_partial", &error);
                     if !queue_event_or_overflow(
                         &state,
                         &event_tx,
@@ -375,6 +380,23 @@ fn map_realtime_inference_error(
         BlockingInferenceError::Inference(error) => {
             ServerEvent::error("inference_failed", error.to_string())
         }
+    }
+}
+
+fn record_inference_health(state: &AppState, kind: &'static str, error: &BlockingInferenceError) {
+    match error {
+        BlockingInferenceError::Timeout { .. } => state
+            .runtime_health
+            .record_failure(format!("{kind} inference timeout")),
+        BlockingInferenceError::Inference(InferenceError::Runtime(_)) => state
+            .runtime_health
+            .record_failure(format!("{kind} runtime inference error")),
+        BlockingInferenceError::Inference(InferenceError::Unavailable(_)) => state
+            .runtime_health
+            .record_failure(format!("{kind} engine unavailable")),
+        BlockingInferenceError::Inference(
+            InferenceError::InvalidAudio(_) | InferenceError::UnsupportedEngine(_),
+        ) => {}
     }
 }
 

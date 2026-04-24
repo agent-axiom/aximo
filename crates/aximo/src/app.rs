@@ -5,7 +5,10 @@ use aximo_core::{RealtimePartialLimits, RealtimeSessionLimits, Scheduler, Sessio
 use aximo_inference::engine::{FakeEngine, SpeechEngine};
 use axum::{extract::DefaultBodyLimit, Router};
 
-use crate::{config::Settings, engine_runtime::EngineRuntime, http, metrics::Metrics, ws};
+use crate::{
+    config::Settings, engine_runtime::EngineRuntime, http, metrics::Metrics,
+    runtime_health::RuntimeHealth, ws,
+};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -21,6 +24,7 @@ pub struct AppState {
     pub realtime_partial_timeout: std::time::Duration,
     pub realtime_final_timeout: std::time::Duration,
     pub metrics: Metrics,
+    pub runtime_health: RuntimeHealth,
 }
 
 pub fn build_app(
@@ -73,9 +77,13 @@ pub fn build_app(
             settings.limits.realtime_final_timeout_ms,
         ),
         metrics: Metrics::default(),
+        runtime_health: RuntimeHealth::new(
+            settings.limits.runtime_degrade_after_consecutive_failures,
+        ),
     };
 
     Router::new()
+        .route("/health/live", axum::routing::get(http::health::live))
         .route("/health/ready", axum::routing::get(http::health::ready))
         .route(
             "/v1/transcriptions",

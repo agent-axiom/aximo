@@ -6,4 +6,5 @@ pub mod http;
 pub mod inference_task;
 pub mod metrics;
 pub mod runtime;
+pub mod runtime_health;
 pub mod ws;
