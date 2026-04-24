@@ -282,6 +282,34 @@ async fn websocket_session_returns_error_for_binary_before_start() {
 }
 
 #[tokio::test]
+async fn websocket_session_rejects_odd_length_pcm_chunk() {
+    let (url, server) = spawn_test_server().await;
+    let (mut socket, _) = connect_async(url).await.unwrap();
+
+    socket
+        .send(Message::Text(r#"{"event":"start"}"#.into()))
+        .await
+        .unwrap();
+    let started = next_event(&mut socket).await;
+    assert_eq!(started["event"], "session_started");
+
+    socket
+        .send(Message::Binary(vec![0_u8; 3].into()))
+        .await
+        .unwrap();
+
+    let event = next_event(&mut socket).await;
+    assert_eq!(event["event"], "error");
+    assert_eq!(event["code"], "invalid_audio_chunk");
+    assert_eq!(
+        event["reason"],
+        "pcm_s16le realtime chunks must be aligned to 16-bit samples"
+    );
+
+    server.abort();
+}
+
+#[tokio::test]
 async fn websocket_session_returns_error_for_stop_before_start() {
     let (url, server) = spawn_test_server().await;
     let (mut socket, _) = connect_async(url).await.unwrap();

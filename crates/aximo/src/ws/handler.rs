@@ -172,6 +172,14 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
             }
             Message::Binary(chunk) => {
                 if let Some(session_id) = active_session_id.as_deref() {
+                    if chunk.len() % PCM_BYTES_PER_SAMPLE != 0 {
+                        queue_or_break!(ServerEvent::error(
+                            "invalid_audio_chunk",
+                            "pcm_s16le realtime chunks must be aligned to 16-bit samples",
+                        ),);
+                        continue;
+                    }
+
                     match state.session_manager.append_audio(session_id, &chunk) {
                         Ok(()) => {
                             let schedule = state
