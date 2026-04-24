@@ -60,11 +60,8 @@ pub fn prepare_short_audio_with_limits(
         return Err(AudioError::UnsupportedContentType(content_type.to_string()));
     }
 
-    let decoded = decode_container_with_sample_limit(
-        bytes,
-        content_type,
-        limits.max_decoded_samples,
-    )?;
+    let decoded =
+        decode_container_with_sample_limit(bytes, content_type, limits.max_decoded_samples)?;
     validate_duration_ms(decoded_duration_ms(&decoded), limits)?;
     let audio_bytes = normalize_decoded_audio(decoded);
 

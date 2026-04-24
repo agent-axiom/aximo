@@ -60,21 +60,20 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
         match message {
             Message::Text(text) => {
                 let Ok(client_event) = serde_json::from_str::<ClientEvent>(&text) else {
-                    queue_or_break!(
-                        ServerEvent::error("invalid_client_event", "failed to parse client event"),
-                    );
+                    queue_or_break!(ServerEvent::error(
+                        "invalid_client_event",
+                        "failed to parse client event"
+                    ),);
                     continue;
                 };
 
                 match client_event.event.as_str() {
                     "start" => {
                         if active_session_id.is_some() {
-                            queue_or_break!(
-                                ServerEvent::error(
-                                    "duplicate_start",
-                                    "session already started for this socket",
-                                ),
-                            );
+                            queue_or_break!(ServerEvent::error(
+                                "duplicate_start",
+                                "session already started for this socket",
+                            ),);
                             continue;
                         }
 
@@ -87,12 +86,10 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                                 queue_or_break!(ServerEvent::session_started(session_id));
                             }
                             Err(_) => {
-                                queue_or_break!(
-                                    ServerEvent::error(
-                                        "realtime_capacity_exhausted",
-                                        "realtime session capacity exhausted",
-                                    ),
-                                );
+                                queue_or_break!(ServerEvent::error(
+                                    "realtime_capacity_exhausted",
+                                    "realtime session capacity exhausted",
+                                ),);
                             }
                         }
                     }
@@ -120,27 +117,24 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                                     queue_or_break!(ServerEvent::final_text(result.text));
                                 }
                                 Err(error) => {
-                                    queue_or_break!(
-                                        ServerEvent::error("inference_failed", error.to_string()),
-                                    );
+                                    queue_or_break!(ServerEvent::error(
+                                        "inference_failed",
+                                        error.to_string()
+                                    ),);
                                 }
                             }
                         } else {
-                            queue_or_break!(
-                                ServerEvent::error(
-                                    "no_active_session",
-                                    "stop requested without an active session",
-                                ),
-                            );
+                            queue_or_break!(ServerEvent::error(
+                                "no_active_session",
+                                "stop requested without an active session",
+                            ),);
                         }
                     }
                     _ => {
-                        queue_or_break!(
-                            ServerEvent::error(
-                                "unsupported_client_event",
-                                format!("unsupported client event: {}", client_event.event),
-                            ),
-                        );
+                        queue_or_break!(ServerEvent::error(
+                            "unsupported_client_event",
+                            format!("unsupported client event: {}", client_event.event),
+                        ),);
                     }
                 }
             }
@@ -164,38 +158,30 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                         }
                         Err(SessionError::SessionTooLarge) => {
                             cleanup_active_session(&state, &mut active_session_id);
-                            queue_or_break!(
-                                ServerEvent::error(
-                                    "realtime_session_too_large",
-                                    "realtime session exceeded configured byte limit",
-                                ),
-                            );
+                            queue_or_break!(ServerEvent::error(
+                                "realtime_session_too_large",
+                                "realtime session exceeded configured byte limit",
+                            ),);
                         }
                         Err(SessionError::SessionTooLong) => {
                             cleanup_active_session(&state, &mut active_session_id);
-                            queue_or_break!(
-                                ServerEvent::error(
-                                    "realtime_session_too_long",
-                                    "realtime session exceeded configured duration limit",
-                                ),
-                            );
+                            queue_or_break!(ServerEvent::error(
+                                "realtime_session_too_long",
+                                "realtime session exceeded configured duration limit",
+                            ),);
                         }
                         Err(SessionError::MissingSession) => {
-                            queue_or_break!(
-                                ServerEvent::error(
-                                    "audio_append_failed",
-                                    "failed to append audio to the active realtime session",
-                                ),
-                            );
+                            queue_or_break!(ServerEvent::error(
+                                "audio_append_failed",
+                                "failed to append audio to the active realtime session",
+                            ),);
                         }
                     }
                 } else {
-                    queue_or_break!(
-                        ServerEvent::error(
-                            "no_active_session",
-                            "binary audio received before start",
-                        ),
-                    );
+                    queue_or_break!(ServerEvent::error(
+                        "no_active_session",
+                        "binary audio received before start",
+                    ),);
                 }
             }
             Message::Close(_) => break,

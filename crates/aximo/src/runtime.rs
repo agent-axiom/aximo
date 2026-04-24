@@ -48,9 +48,7 @@ pub fn load_default_engines(
     settings: &Settings,
 ) -> anyhow::Result<(Arc<dyn SpeechEngine>, Arc<dyn SpeechEngine>)> {
     load_default_engines_with_factory(settings, |spec| {
-        RuntimeEngineFactory
-            .build(spec)
-            .map_err(anyhow::Error::new)
+        RuntimeEngineFactory.build(spec).map_err(anyhow::Error::new)
     })
 }
 
@@ -97,12 +95,11 @@ mod tests {
         let settings = Settings::default();
         let build_count = AtomicUsize::new(0);
 
-        let (offline, realtime) =
-            load_default_engines_with_factory(&settings, |_spec| {
-                build_count.fetch_add(1, Ordering::SeqCst);
-                Ok(Arc::new(FakeEngine) as Arc<dyn SpeechEngine>)
-            })
-            .unwrap();
+        let (offline, realtime) = load_default_engines_with_factory(&settings, |_spec| {
+            build_count.fetch_add(1, Ordering::SeqCst);
+            Ok(Arc::new(FakeEngine) as Arc<dyn SpeechEngine>)
+        })
+        .unwrap();
 
         assert!(Arc::ptr_eq(&offline, &realtime));
         assert_eq!(build_count.load(Ordering::SeqCst), 1);
@@ -114,12 +111,11 @@ mod tests {
         settings.inference.default_realtime_engine = "gigaam".to_string();
         let build_count = AtomicUsize::new(0);
 
-        let (offline, realtime) =
-            load_default_engines_with_factory(&settings, |_spec| {
-                build_count.fetch_add(1, Ordering::SeqCst);
-                Ok(Arc::new(FakeEngine) as Arc<dyn SpeechEngine>)
-            })
-            .unwrap();
+        let (offline, realtime) = load_default_engines_with_factory(&settings, |_spec| {
+            build_count.fetch_add(1, Ordering::SeqCst);
+            Ok(Arc::new(FakeEngine) as Arc<dyn SpeechEngine>)
+        })
+        .unwrap();
 
         assert!(!Arc::ptr_eq(&offline, &realtime));
         assert_eq!(build_count.load(Ordering::SeqCst), 2);
