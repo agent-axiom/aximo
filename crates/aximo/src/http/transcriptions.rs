@@ -9,6 +9,7 @@ use axum::{
     Json,
 };
 use serde::Serialize;
+use std::time::{Duration, Instant};
 
 use crate::{
     app::AppState,
@@ -49,6 +50,12 @@ pub async fn transcribe_short(
     headers: HeaderMap,
     body: Result<Bytes, BytesRejection>,
 ) -> Result<Json<ShortAudioResult>, HttpError> {
+    let body = body.map_err(map_body_rejection).map_err(|error| {
+        record_http_error(&state, &error);
+        error
+    })?;
+    state.metrics.record_audio_body_bytes(body.len());
+
     let _request_permit = state
         .scheduler
         .try_acquire_short_audio_request()
@@ -58,20 +65,34 @@ pub async fn transcribe_short(
                 "short_audio_request_capacity_exhausted",
                 "short-audio request capacity exhausted",
             )
+        })
+        .map_err(|error| {
+            record_http_error(&state, &error);
+            error
         })?;
-    let body = body.map_err(map_body_rejection)?;
 
     let content_type = headers
         .get(axum::http::header::CONTENT_TYPE)
         .and_then(|value| value.to_str().ok())
         .unwrap_or_default()
         .to_string();
+    let decode_started_at = Instant::now();
     let prepared_audio = aximo_audio::prepare_short_audio_with_limits(
         body.as_ref(),
         &content_type,
         state.short_audio_limits,
     )
-    .map_err(map_audio_error)?;
+    .map_err(map_audio_error)
+    .map_err(|error| {
+        state.metrics.record_audio_decode(decode_started_at.elapsed(), None);
+        record_http_error(&state, &error);
+        error
+    })?;
+    state.metrics.record_audio_decode(
+        decode_started_at.elapsed(),
+        Some(prepared_audio.duration_ms),
+    );
+    let audio_duration_ms = prepared_audio.duration_ms;
 
     let request = ShortAudioRequest {
         audio_bytes: prepared_audio.audio_bytes,
@@ -87,16 +108,37 @@ pub async fn transcribe_short(
             "short_audio_inference_capacity_exhausted",
             "short-audio inference capacity exhausted",
         )
+    })
+    .map_err(|error| {
+        record_http_error(&state, &error);
+        error
     })?;
-
-    run_blocking_inference_with_timeout(
+    let inference_started_at = Instant::now();
+    let result = run_blocking_inference_with_timeout(
         state.offline_engine.clone(),
         request,
         state.short_inference_timeout,
     )
-        .await
-        .map(Json)
-        .map_err(|error| map_blocking_inference_error(error, "short-audio inference timed out"))
+    .await;
+    let inference_elapsed = inference_started_at.elapsed();
+    state.metrics.record_inference(
+        "short",
+        Duration::ZERO,
+        inference_elapsed,
+        audio_duration_ms,
+    );
+
+    match result {
+        Ok(result) => {
+            state.metrics.record_http_response(200, "ok");
+            Ok(Json(result))
+        }
+        Err(error) => {
+            let error = map_blocking_inference_error(error, "short-audio inference timed out");
+            record_http_error(&state, &error);
+            Err(error)
+        }
+    }
 }
 
 fn map_body_rejection(error: BytesRejection) -> HttpError {
@@ -163,6 +205,13 @@ fn map_inference_error(error: InferenceError) -> HttpError {
             format!("runtime inference error: {message}"),
         ),
     }
+}
+
+fn record_http_error(state: &AppState, error: &HttpError) {
+    state
+        .metrics
+        .record_http_response(error.status.as_u16(), error.body.code.clone());
+    state.metrics.record_error(error.body.code.clone());
 }
 
 fn map_blocking_inference_error(error: BlockingInferenceError, timeout_message: &str) -> HttpError {

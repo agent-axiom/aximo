@@ -1,3 +1,5 @@
+use std::time::{Duration, Instant};
+
 use aximo_core::{PartialSchedule, SessionError, ShortAudioRequest};
 use axum::{
     extract::{
@@ -7,7 +9,7 @@ use axum::{
     response::IntoResponse,
 };
 use futures_util::{SinkExt, StreamExt};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, mpsc::error::TrySendError};
 
 use crate::{
     app::AppState,
@@ -17,6 +19,9 @@ use crate::{
 
 // 5 seconds of pcm_s16le 16 kHz mono audio.
 const REALTIME_PARTIAL_WINDOW_BYTES: usize = 160_000;
+const PCM_SAMPLE_RATE: u64 = 16_000;
+const PCM_BYTES_PER_SAMPLE: usize = 2;
+const WRITER_DRAIN_TIMEOUT: Duration = Duration::from_millis(100);
 
 pub async fn realtime_socket(
     ws: WebSocketUpgrade,
@@ -30,7 +35,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
     let (event_tx, mut event_rx) =
         mpsc::channel::<ServerEvent>(state.realtime_event_channel_capacity);
     let (overflow_tx, mut overflow_rx) = mpsc::channel::<()>(1);
-    let writer = tokio::spawn(async move {
+    let mut writer = tokio::spawn(async move {
         while let Some(event) = event_rx.recv().await {
             let message = serde_json::to_string(&event).expect("serialize websocket event");
             if sender.send(Message::Text(message.into())).await.is_err() {
@@ -43,7 +48,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
     loop {
         macro_rules! queue_or_break {
             ($event:expr $(,)?) => {
-                if !queue_event(&event_tx, $event) {
+                if !queue_event_or_overflow(&state, &event_tx, &overflow_tx, $event) {
                     break;
                 }
             };
@@ -82,6 +87,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                                 let session_id = state
                                     .session_manager
                                     .start_session(permit, state.realtime_session_limits);
+                                state.metrics.inc_ws_sessions_active();
                                 active_session_id = Some(session_id.clone());
                                 queue_or_break!(ServerEvent::session_started(session_id));
                             }
@@ -99,6 +105,8 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                                 .session_manager
                                 .finish_session(&session_id)
                                 .unwrap_or_default();
+                            state.metrics.dec_ws_sessions_active();
+                            let audio_duration_ms = pcm_duration_ms(audio_bytes.len());
                             let request = ShortAudioRequest {
                                 audio_bytes,
                                 content_type: "audio/pcm".to_string(),
@@ -107,9 +115,12 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                                 timestamps: false,
                             };
 
+                            let wait_started_at = Instant::now();
                             let _inference_permit =
                                 state.scheduler.acquire_realtime_inference().await;
+                            let wait_elapsed = wait_started_at.elapsed();
 
+                            let inference_started_at = Instant::now();
                             match run_blocking_inference_with_timeout(
                                 state.realtime_engine.clone(),
                                 request,
@@ -118,9 +129,21 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                             .await
                             {
                                 Ok(result) => {
+                                    state.metrics.record_inference(
+                                        "realtime_final",
+                                        wait_elapsed,
+                                        inference_started_at.elapsed(),
+                                        audio_duration_ms,
+                                    );
                                     queue_or_break!(ServerEvent::final_text(result.text));
                                 }
                                 Err(error) => {
+                                    state.metrics.record_inference(
+                                        "realtime_final",
+                                        wait_elapsed,
+                                        inference_started_at.elapsed(),
+                                        audio_duration_ms,
+                                    );
                                     queue_or_break!(map_realtime_inference_error(
                                         error,
                                         "realtime final inference timed out"
@@ -195,7 +218,10 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
 
     cleanup_active_session(&state, &mut active_session_id);
     drop(event_tx);
-    writer.abort();
+    tokio::select! {
+        _ = &mut writer => {}
+        _ = tokio::time::sleep(WRITER_DRAIN_TIMEOUT) => writer.abort(),
+    }
     let _ = writer.await;
 }
 
@@ -207,15 +233,21 @@ fn spawn_partial_inference(
 ) {
     tokio::spawn(async move {
         loop {
+            let wait_started_at = Instant::now();
             let _inference_permit = state.scheduler.acquire_realtime_inference().await;
+            let wait_elapsed = wait_started_at.elapsed();
             let audio_bytes = match state
                 .session_manager
                 .recent_audio_snapshot(&session_id, REALTIME_PARTIAL_WINDOW_BYTES)
             {
                 Ok(audio_bytes) => audio_bytes,
-                Err(SessionError::MissingSession) => break,
+                Err(SessionError::MissingSession) => {
+                    state.metrics.record_realtime_stale_partial_skip();
+                    break;
+                }
                 Err(SessionError::SessionTooLarge | SessionError::SessionTooLong) => break,
             };
+            let audio_duration_ms = pcm_duration_ms(audio_bytes.len());
             let request = ShortAudioRequest {
                 audio_bytes,
                 content_type: "audio/pcm".to_string(),
@@ -224,28 +256,46 @@ fn spawn_partial_inference(
                 timestamps: false,
             };
 
+            let inference_started_at = Instant::now();
             let inference_result = run_blocking_inference_with_timeout(
                 state.realtime_engine.clone(),
                 request,
                 state.realtime_partial_timeout,
             )
             .await;
+            let inference_elapsed = inference_started_at.elapsed();
+            state.metrics.record_inference(
+                "realtime_partial",
+                wait_elapsed,
+                inference_elapsed,
+                audio_duration_ms,
+            );
             let follow_up = match state.session_manager.complete_partial(&session_id) {
                 Ok(follow_up) => follow_up,
-                Err(SessionError::MissingSession) => break,
+                Err(SessionError::MissingSession) => {
+                    state.metrics.record_realtime_stale_partial_skip();
+                    break;
+                }
                 Err(SessionError::SessionTooLarge | SessionError::SessionTooLong) => break,
             };
 
             match inference_result {
                 Ok(result) => {
-                    if !queue_event(&event_tx, ServerEvent::partial_text(result.text)) {
+                    if !queue_event_or_overflow(
+                        &state,
+                        &event_tx,
+                        &overflow_tx,
+                        ServerEvent::partial_text(result.text),
+                    ) {
                         let _ = overflow_tx.try_send(());
                         break;
                     }
                 }
                 Err(error) => {
-                    if !queue_event(
+                    if !queue_event_or_overflow(
+                        &state,
                         &event_tx,
+                        &overflow_tx,
                         map_realtime_inference_error(
                             error,
                             "realtime partial inference timed out",
@@ -260,12 +310,56 @@ fn spawn_partial_inference(
             if !matches!(follow_up, PartialSchedule::StartNow) {
                 break;
             }
+            state.metrics.record_realtime_partial_coalesced();
         }
     });
 }
 
-fn queue_event(event_tx: &mpsc::Sender<ServerEvent>, event: ServerEvent) -> bool {
-    event_tx.try_send(event).is_ok()
+fn queue_event_or_overflow(
+    state: &AppState,
+    event_tx: &mpsc::Sender<ServerEvent>,
+    overflow_tx: &mpsc::Sender<()>,
+    event: ServerEvent,
+) -> bool {
+    let error_code = event.code.clone();
+    match queue_event(event_tx, event) {
+        Ok(()) => {
+            if let Some(code) = error_code {
+                state.metrics.record_error(code);
+            }
+            true
+        }
+        Err(QueueEventError::Full) => {
+            state.metrics.record_ws_queue_overflow();
+            state.metrics.record_error("websocket_queue_overflow");
+            let _ = queue_event(
+                event_tx,
+                ServerEvent::error(
+                    "websocket_queue_overflow",
+                    "websocket event queue overflowed",
+                ),
+            );
+            let _ = overflow_tx.try_send(());
+            false
+        }
+        Err(QueueEventError::Closed) => false,
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum QueueEventError {
+    Full,
+    Closed,
+}
+
+fn queue_event(
+    event_tx: &mpsc::Sender<ServerEvent>,
+    event: ServerEvent,
+) -> Result<(), QueueEventError> {
+    event_tx.try_send(event).map_err(|error| match error {
+        TrySendError::Full(_) => QueueEventError::Full,
+        TrySendError::Closed(_) => QueueEventError::Closed,
+    })
 }
 
 fn map_realtime_inference_error(
@@ -274,6 +368,7 @@ fn map_realtime_inference_error(
 ) -> ServerEvent {
     match error {
         BlockingInferenceError::Timeout { .. } => {
+            // The blocking OS thread may continue, but the client receives a bounded contract.
             ServerEvent::error("inference_timeout", timeout_reason)
         }
         BlockingInferenceError::Inference(error) => {
@@ -284,8 +379,15 @@ fn map_realtime_inference_error(
 
 fn cleanup_active_session(state: &AppState, active_session_id: &mut Option<String>) {
     if let Some(session_id) = active_session_id.take() {
-        let _ = state.session_manager.finish_session(&session_id);
+        if state.session_manager.finish_session(&session_id).is_ok() {
+            state.metrics.dec_ws_sessions_active();
+        }
     }
+}
+
+fn pcm_duration_ms(byte_len: usize) -> u64 {
+    let sample_count = byte_len / PCM_BYTES_PER_SAMPLE;
+    sample_count as u64 * 1000 / PCM_SAMPLE_RATE
 }
 
 #[cfg(test)]
@@ -296,7 +398,10 @@ mod tests {
     fn queue_event_reports_full_bounded_channel() {
         let (event_tx, _event_rx) = mpsc::channel(1);
 
-        assert!(queue_event(&event_tx, ServerEvent::partial_text("first")));
-        assert!(!queue_event(&event_tx, ServerEvent::partial_text("second")));
+        assert_eq!(queue_event(&event_tx, ServerEvent::partial_text("first")), Ok(()));
+        assert_eq!(
+            queue_event(&event_tx, ServerEvent::partial_text("second")),
+            Err(QueueEventError::Full)
+        );
     }
 }

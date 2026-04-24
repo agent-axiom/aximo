@@ -8,6 +8,7 @@
 - `GET /v1/realtime` for realtime WebSocket streaming
 - `GET /openapi.json` for the OpenAPI schema
 - `GET /docs/` for Swagger UI with a built-in microphone recorder panel
+- `GET /metrics` for Prometheus-compatible operational metrics
 
 ## Workspace
 
@@ -199,6 +200,7 @@ After the service starts:
 
 - Swagger UI: [http://127.0.0.1:8080/docs/](http://127.0.0.1:8080/docs/)
 - OpenAPI JSON: [http://127.0.0.1:8080/openapi.json](http://127.0.0.1:8080/openapi.json)
+- Metrics: [http://127.0.0.1:8080/metrics](http://127.0.0.1:8080/metrics)
 - Client examples: [docs/client-examples.md](docs/client-examples.md)
 
 The `/docs/` page also includes an `Aximo Recorder` panel that can capture microphone audio in the browser:
@@ -215,6 +217,23 @@ One notable addition: I extended Swagger to support sending recordings directly 
 ## Troubleshooting
 
 If container logs include `onnxruntime cpuid_info warning: Unknown CPU vendor`, this is typically an ONNX Runtime CPU detection warning on ARM or virtualized environments, not a model-load failure. The container now sets `ORT_LOG=error` to reduce that noise in normal runs.
+
+## Metrics
+
+`GET /metrics` exposes lightweight Prometheus text metrics for operational visibility:
+
+- `aximo_http_requests_total{status,code}`
+- `aximo_errors_total{code}`
+- `aximo_audio_body_bytes_total`
+- `aximo_audio_decode_seconds_sum`
+- `aximo_audio_duration_seconds_sum`
+- `aximo_inference_wait_seconds_sum{kind}`
+- `aximo_inference_seconds_sum{kind}`
+- `aximo_rtf_sum{kind}`
+- `aximo_ws_sessions_active`
+- `aximo_ws_queue_overflows_total`
+- `aximo_realtime_partial_coalesced_total`
+- `aximo_realtime_stale_partial_skips_total`
 
 ## Development
 

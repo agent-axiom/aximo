@@ -5,7 +5,7 @@ use aximo_core::{RealtimePartialLimits, RealtimeSessionLimits, Scheduler, Sessio
 use aximo_inference::engine::{FakeEngine, SpeechEngine};
 use axum::{extract::DefaultBodyLimit, Router};
 
-use crate::{config::Settings, http, ws};
+use crate::{config::Settings, http, metrics::Metrics, ws};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -20,6 +20,7 @@ pub struct AppState {
     pub short_inference_timeout: std::time::Duration,
     pub realtime_partial_timeout: std::time::Duration,
     pub realtime_final_timeout: std::time::Duration,
+    pub metrics: Metrics,
 }
 
 pub fn build_app(
@@ -65,6 +66,7 @@ pub fn build_app(
         realtime_final_timeout: std::time::Duration::from_millis(
             settings.limits.realtime_final_timeout_ms,
         ),
+        metrics: Metrics::default(),
     };
 
     Router::new()
@@ -78,6 +80,7 @@ pub fn build_app(
             "/v1/realtime",
             axum::routing::get(ws::handler::realtime_socket),
         )
+        .route("/metrics", axum::routing::get(crate::metrics::metrics))
         .merge(crate::docs::router())
         .with_state(state)
 }

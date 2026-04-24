@@ -14,6 +14,7 @@ const PCM_BYTES_PER_SAMPLE: usize = 2;
 pub struct PreparedAudio {
     pub audio_bytes: Vec<u8>,
     pub content_type: &'static str,
+    pub duration_ms: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -50,6 +51,7 @@ pub fn prepare_short_audio_with_limits(
             return Ok(PreparedAudio {
                 audio_bytes: bytes.to_vec(),
                 content_type: AudioMediaType::RawPcm.canonical_content_type(),
+                duration_ms: raw_pcm_duration_ms(bytes),
             });
         }
         AudioMediaType::Wav => {
@@ -59,6 +61,7 @@ pub fn prepare_short_audio_with_limits(
                 return Ok(PreparedAudio {
                     audio_bytes: bytes.to_vec(),
                     content_type: AudioMediaType::Wav.canonical_content_type(),
+                    duration_ms: wav_info.duration_ms,
                 });
             }
         }
@@ -67,12 +70,14 @@ pub fn prepare_short_audio_with_limits(
 
     let decoded =
         decode_container_with_sample_limit(bytes, content_type, limits.max_decoded_samples)?;
-    validate_duration_ms(decoded_duration_ms(&decoded), limits)?;
+    let duration_ms = decoded_duration_ms(&decoded);
+    validate_duration_ms(duration_ms, limits)?;
     let audio_bytes = normalize_decoded_audio(decoded);
 
     Ok(PreparedAudio {
         audio_bytes,
         content_type: "audio/pcm",
+        duration_ms,
     })
 }
 
@@ -90,11 +95,14 @@ fn validate_raw_pcm(bytes: &[u8], limits: ShortAudioLimits) -> Result<(), AudioE
         )));
     }
 
-    let sample_count = bytes.len() / PCM_BYTES_PER_SAMPLE;
-    let duration_ms = sample_count as u64 * 1000 / u64::from(TARGET_SAMPLE_RATE);
-    validate_duration_ms(duration_ms, limits)?;
+    validate_duration_ms(raw_pcm_duration_ms(bytes), limits)?;
 
     Ok(())
+}
+
+fn raw_pcm_duration_ms(bytes: &[u8]) -> u64 {
+    let sample_count = bytes.len() / PCM_BYTES_PER_SAMPLE;
+    sample_count as u64 * 1000 / u64::from(TARGET_SAMPLE_RATE)
 }
 
 #[derive(Debug, Clone, Copy)]

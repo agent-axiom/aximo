@@ -55,13 +55,14 @@ binary audio chunk
 - `stop` before `start`
 - repeated `start` while a session is already active on the same socket
 - realtime capacity exhausted
-- inference failure while producing `partial` or `final`
+- inference failure or inference timeout while producing `partial` or `final`
 
 ## Backpressure Semantics
 
 - `partial` updates are lossy by design and optimized for freshness.
 - If multiple eligible partials accumulate while one is already in flight, they are coalesced into one latest follow-up partial.
 - `final` is never coalesced or dropped and still runs against the full session buffer within the configured realtime session limits.
-- Server events use a bounded per-socket queue controlled by `realtime_event_channel_capacity`; queue overflow terminates the websocket session.
+- Server events use a bounded per-socket queue controlled by `realtime_event_channel_capacity`; queue overflow increments `aximo_ws_queue_overflows_total`, attempts to enqueue a final `websocket_queue_overflow` error event, and then terminates the websocket session.
+- Partial and final inference use separate timeout budgets. If a timeout fires, the scheduler permit is released and the client receives `inference_timeout`; the underlying blocking backend call may still return later because the server cannot safely kill the OS blocking thread.
 
 All of the above return a server event with `{"event":"error","code":"...","reason":"..."}`.
