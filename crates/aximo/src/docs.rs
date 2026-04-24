@@ -24,6 +24,7 @@ const RECORDER_STYLES: &str = include_str!("../static/docs/aximo-recorder.css");
         schemas(
             AudioBinaryBodyDoc,
             ClientEventDoc,
+            ComponentReadinessDoc,
             ErrorResponseDoc,
             ReadinessDoc,
             ServerEventDoc,
@@ -63,9 +64,22 @@ struct ErrorResponseDoc {
 struct ReadinessDoc {
     /// `ready` or `degraded`.
     status: String,
-    /// Consecutive timeout/runtime/unavailable inference failures.
+    /// Maximum consecutive timeout/runtime/unavailable inference failures across components.
     consecutive_failures: u64,
-    /// Degradation reason when status is `degraded`.
+    /// Per-engine/per-path readiness details, for example `short:parakeet`,
+    /// `realtime_partial:parakeet`, or `realtime_final:parakeet`.
+    components: Vec<ComponentReadinessDoc>,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+struct ComponentReadinessDoc {
+    /// Component key in `<path>:<engine>` form.
+    component: String,
+    /// `ready` or `degraded`.
+    status: String,
+    /// Consecutive timeout/runtime/unavailable inference failures for this component.
+    consecutive_failures: u64,
+    /// Degradation reason when this component is `degraded`.
     #[schema(nullable)]
     reason: Option<String>,
 }
@@ -145,6 +159,12 @@ fn health_ready_doc() {}
         content = AudioBinaryBodyDoc,
         content_type = "application/octet-stream",
         description = "Binary audio bytes. Supported Content-Type values include audio/wav, audio/mpeg, audio/flac, audio/mp4, audio/x-m4a, audio/pcm, and application/octet-stream."
+    ),
+    params(
+        ("engine" = Option<String>, Query, description = "Optional short-audio engine selector. Currently must match the configured offline engine."),
+        ("language" = Option<String>, Query, description = "Optional language hint such as `ru`, `en`, or `auto`. Alias for `language_hint`."),
+        ("language_hint" = Option<String>, Query, description = "Optional backend language hint; takes precedence over `language` when both are supplied."),
+        ("timestamps" = Option<bool>, Query, description = "Request segment/timestamp metadata when the backend supports it. The current transcribe-rs adapter is text-only.")
     ),
     responses(
         (status = 200, description = "Transcription completed. Optional metadata remains null or empty when the active engine integration does not expose it.", body = ShortAudioResultDoc),

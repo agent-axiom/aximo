@@ -19,6 +19,35 @@ struct BlockingEngine {
     release_rx: Mutex<Option<mpsc::Receiver<()>>>,
 }
 
+struct RequestRecordingEngine {
+    requests: Arc<Mutex<Vec<aximo_core::ShortAudioRequest>>>,
+}
+
+impl RequestRecordingEngine {
+    fn new() -> (Self, Arc<Mutex<Vec<aximo_core::ShortAudioRequest>>>) {
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        (
+            Self {
+                requests: Arc::clone(&requests),
+            },
+            requests,
+        )
+    }
+}
+
+impl aximo_inference::engine::SpeechEngine for RequestRecordingEngine {
+    fn transcribe_short(
+        &self,
+        request: aximo_core::ShortAudioRequest,
+    ) -> Result<aximo_core::ShortAudioResult, aximo_inference::engine::InferenceError> {
+        self.requests.lock().unwrap().push(request);
+        Ok(aximo_core::ShortAudioResult::new(
+            "recorded",
+            "request-recorder",
+        ))
+    }
+}
+
 impl BlockingEngine {
     fn new() -> (Self, oneshot::Receiver<()>, mpsc::Sender<()>) {
         let (started_tx, started_rx) = oneshot::channel();
@@ -183,6 +212,80 @@ async fn transcription_endpoint_returns_fake_engine_result() {
     assert!(json["detected_language"].is_null());
     assert!(json["duration_ms"].is_number());
     assert!(json["processing_ms"].is_number());
+}
+
+#[tokio::test]
+async fn transcription_endpoint_forwards_query_options_to_engine_request() {
+    let (engine, requests) = RequestRecordingEngine::new();
+    let app = aximo::app::build_app(
+        aximo::config::Settings::default(),
+        Arc::new(engine),
+        Arc::new(aximo_inference::engine::FakeEngine),
+    );
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/transcriptions?engine=parakeet&language=ru&timestamps=true")
+                .header("content-type", "audio/wav")
+                .body(Body::from(fixture_bytes("tone-16k-mono.wav")))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let requests = requests.lock().unwrap();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].engine.as_deref(), Some("parakeet"));
+    assert_eq!(requests[0].language_hint.as_deref(), Some("ru"));
+    assert!(requests[0].timestamps);
+}
+
+#[tokio::test]
+async fn transcription_endpoint_returns_bad_request_for_query_engine_mismatch() {
+    let app = aximo::app::build_test_app().await;
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/transcriptions?engine=moonshine")
+                .header("content-type", "audio/wav")
+                .body(Body::from(fixture_bytes("tone-16k-mono.wav")))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let json: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["code"], "unsupported_engine");
+    assert_eq!(
+        json["message"],
+        "unsupported engine: moonshine; configured short-audio engine is parakeet"
+    );
+}
+
+#[tokio::test]
+async fn transcription_endpoint_returns_bad_request_for_invalid_query_options() {
+    let app = aximo::app::build_test_app().await;
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/transcriptions?timestamps=maybe")
+                .header("content-type", "audio/wav")
+                .body(Body::from(fixture_bytes("tone-16k-mono.wav")))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let json: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["code"], "invalid_query");
 }
 
 #[tokio::test]
