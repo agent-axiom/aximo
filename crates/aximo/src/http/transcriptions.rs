@@ -88,19 +88,23 @@ pub async fn transcribe_short(
 }
 
 fn map_audio_error(error: AudioError) -> HttpError {
-    let message = match error {
-        AudioError::UnsupportedContentType(message) => {
-            format!("unsupported content type {message}")
-        }
-        AudioError::InvalidPcm(message) => message,
-        AudioError::Decode(message) => format!("failed to decode audio container: {message}"),
-    };
-
-    HttpError::new(
-        StatusCode::BAD_REQUEST,
-        "invalid_audio",
-        format!("invalid audio payload: {message}"),
-    )
+    match error {
+        AudioError::UnsupportedContentType(message) => HttpError::new(
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            "unsupported_media_type",
+            format!("unsupported media type: {message}"),
+        ),
+        AudioError::InvalidPcm(message) => HttpError::new(
+            StatusCode::BAD_REQUEST,
+            "invalid_audio",
+            format!("invalid audio payload: {message}"),
+        ),
+        AudioError::Decode(message) => HttpError::new(
+            StatusCode::BAD_REQUEST,
+            "invalid_audio",
+            format!("invalid audio payload: failed to decode audio container: {message}"),
+        ),
+    }
 }
 
 fn map_inference_error(error: InferenceError) -> HttpError {

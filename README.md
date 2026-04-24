@@ -119,6 +119,8 @@ Error responses from `POST /v1/transcriptions` are structured JSON:
 }
 ```
 
+Unsupported short-audio media types return `415 Unsupported Media Type` with code `unsupported_media_type`. Malformed payloads for supported media types remain `400 invalid_audio`.
+
 ## Realtime Example
 
 Realtime uses WebSocket and raw `pcm_s16le`, `16 kHz`, mono binary chunks.

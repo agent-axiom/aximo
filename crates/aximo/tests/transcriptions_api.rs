@@ -341,6 +341,33 @@ async fn transcription_endpoint_returns_bad_request_for_invalid_audio() {
 }
 
 #[tokio::test]
+async fn transcription_endpoint_returns_unsupported_media_type_for_unknown_content_type() {
+    let app = aximo::app::build_test_app().await;
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/transcriptions")
+                .header("content-type", "application/json")
+                .body(Body::from(br#"{"audio":"nope"}"#.to_vec()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::UNSUPPORTED_MEDIA_TYPE);
+
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let json: Value = serde_json::from_slice(&body).unwrap();
+
+    assert_eq!(json["code"], "unsupported_media_type");
+    assert_eq!(
+        json["message"],
+        "unsupported media type: application/json"
+    );
+}
+
+#[tokio::test]
 async fn transcription_endpoint_returns_bad_request_for_unsupported_engine() {
     let app = aximo::app::build_app(
         aximo::config::Settings::default(),

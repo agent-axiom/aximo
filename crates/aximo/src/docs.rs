@@ -125,6 +125,7 @@ fn health_ready_doc() {}
     responses(
         (status = 200, description = "Transcription completed. Optional metadata remains null or empty when the active engine integration does not expose it.", body = ShortAudioResultDoc),
         (status = 400, description = "Client supplied invalid audio or engine selection", body = ErrorResponseDoc),
+        (status = 415, description = "Content-Type is not supported for short-audio ingest", body = ErrorResponseDoc),
         (status = 429, description = "Short-audio request or inference concurrency limit exceeded", body = ErrorResponseDoc),
         (status = 500, description = "Inference runtime failed inside the service", body = ErrorResponseDoc),
         (status = 503, description = "Inference engine is unavailable", body = ErrorResponseDoc)
