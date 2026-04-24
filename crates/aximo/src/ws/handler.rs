@@ -207,6 +207,7 @@ fn spawn_partial_inference(
 ) {
     tokio::spawn(async move {
         loop {
+            let _inference_permit = state.scheduler.acquire_realtime_inference().await;
             let audio_bytes = match state
                 .session_manager
                 .recent_audio_snapshot(&session_id, REALTIME_PARTIAL_WINDOW_BYTES)
@@ -223,7 +224,6 @@ fn spawn_partial_inference(
                 timestamps: false,
             };
 
-            let _inference_permit = state.scheduler.acquire_realtime_inference().await;
             let inference_result =
                 run_blocking_inference(state.realtime_engine.clone(), request).await;
             let follow_up = match state.session_manager.complete_partial(&session_id) {

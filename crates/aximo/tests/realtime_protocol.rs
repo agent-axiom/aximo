@@ -820,3 +820,59 @@ async fn websocket_partial_uses_latest_wins_backpressure() {
 
     server.abort();
 }
+
+#[tokio::test]
+async fn websocket_skips_partial_inference_when_session_stops_while_waiting_for_slot() {
+    let mut settings = aximo::config::Settings::default();
+    settings.limits.max_realtime_sessions = 2;
+    settings.limits.max_realtime_inferences = 1;
+    settings.limits.realtime_partial_min_interval_ms = 0;
+    settings.limits.realtime_partial_min_chunk_bytes = 3_200;
+    let (engine, requests, first_started_rx, release_first_tx) = BlockingRecordingEngine::new();
+    let app = aximo::app::build_app(
+        settings,
+        Arc::new(aximo_inference::engine::FakeEngine),
+        Arc::new(engine),
+    );
+    let (url, server) = spawn_server_with_app(app).await;
+    let (mut first_socket, _) = connect_async(url.clone()).await.unwrap();
+    let (mut second_socket, _) = connect_async(url).await.unwrap();
+
+    first_socket
+        .send(Message::Text(r#"{"event":"start"}"#.into()))
+        .await
+        .unwrap();
+    first_socket
+        .send(Message::Binary(vec![0_u8; 3_200].into()))
+        .await
+        .unwrap();
+    first_started_rx.await.unwrap();
+
+    second_socket
+        .send(Message::Text(r#"{"event":"start"}"#.into()))
+        .await
+        .unwrap();
+    second_socket
+        .send(Message::Binary(vec![0_u8; 3_200].into()))
+        .await
+        .unwrap();
+    sleep(Duration::from_millis(50)).await;
+    second_socket
+        .send(Message::Text(r#"{"event":"stop"}"#.into()))
+        .await
+        .unwrap();
+    sleep(Duration::from_millis(50)).await;
+
+    release_first_tx.send(()).unwrap();
+
+    let second_started = next_event(&mut second_socket).await;
+    let second_final = timeout(Duration::from_secs(1), next_event(&mut second_socket))
+        .await
+        .expect("second session should receive final after stale partial is skipped");
+
+    assert_eq!(second_started["event"], "session_started");
+    assert_eq!(second_final["event"], "final");
+    assert_eq!(*requests.lock().unwrap(), vec![3_200, 3_200]);
+
+    server.abort();
+}
