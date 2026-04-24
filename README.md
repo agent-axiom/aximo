@@ -247,6 +247,10 @@ just coverage
 just setup-models
 ```
 
+## Container Releases
+
+The `Container` GitHub Actions workflow publishes `ghcr.io/agent-axiom/aximo` on pushes to `main`, semantic version tags such as `v0.1.0`, and manual dispatch. Tags include branch, semver, major/minor, and git SHA variants. The image intentionally does not include model files; mount a model directory and provide `AXIMO_CONFIG` as shown in the Docker Compose example.
+
 ## crates.io
 
 The publishable library crates are:

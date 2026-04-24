@@ -25,3 +25,16 @@ fn workspace_exposes_runtime_setup_artifacts() {
     assert!(root.join("scripts/fetch-models.sh").exists());
     assert!(justfile.contains("setup-models:"));
 }
+
+#[test]
+fn workspace_exposes_container_release_workflow() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(2)
+        .expect("workspace root");
+    let workflow = std::fs::read_to_string(root.join(".github/workflows/container.yml")).unwrap();
+
+    assert!(workflow.contains("ghcr.io/"));
+    assert!(workflow.contains("docker/build-push-action"));
+    assert!(workflow.contains("type=semver"));
+}
