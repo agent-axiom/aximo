@@ -420,12 +420,39 @@ impl Metrics {
 }
 
 pub async fn metrics(State(state): State<AppState>) -> Response {
+    let mut body = state.metrics.render_prometheus();
+    let readiness = state.runtime_health.readiness();
+    writeln!(
+        body,
+        "# HELP aximo_runtime_degraded Runtime readiness degraded state."
+    )
+    .expect("write metrics");
+    writeln!(body, "# TYPE aximo_runtime_degraded gauge").expect("write metrics");
+    writeln!(
+        body,
+        "aximo_runtime_degraded {}",
+        u8::from(readiness.status == "degraded")
+    )
+    .expect("write metrics");
+    writeln!(
+        body,
+        "# HELP aximo_runtime_consecutive_failures Consecutive runtime inference failures tracked by readiness."
+    )
+    .expect("write metrics");
+    writeln!(body, "# TYPE aximo_runtime_consecutive_failures gauge").expect("write metrics");
+    writeln!(
+        body,
+        "aximo_runtime_consecutive_failures {}",
+        readiness.consecutive_failures
+    )
+    .expect("write metrics");
+
     (
         [(
             header::CONTENT_TYPE,
             "text/plain; version=0.0.4; charset=utf-8",
         )],
-        state.metrics.render_prometheus(),
+        body,
     )
         .into_response()
 }
