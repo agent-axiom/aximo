@@ -141,7 +141,7 @@ fn transcribe_short_doc() {}
     responses(
         (
             status = 101,
-            description = "WebSocket upgraded. Send {\"event\":\"start\"}, then raw pcm_s16le 16 kHz mono binary chunks, then {\"event\":\"stop\"}. Server emits session_started, partial, final, and error events. Error events include machine-readable code and human-readable reason."
+            description = "WebSocket upgraded. This is bounded buffered realtime, not a true incremental streaming decoder. Send {\"event\":\"start\"}, then raw pcm_s16le 16 kHz mono binary chunks, then {\"event\":\"stop\"}. Server emits session_started, partial, final, and error events. Partial events use latest-wins coalescing from a bounded rolling window; final waits for the realtime inference slot and transcribes the full bounded session buffer. Error events include machine-readable code and human-readable reason."
         )
     )
 )]

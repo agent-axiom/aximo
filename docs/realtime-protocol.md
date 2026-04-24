@@ -2,6 +2,8 @@
 
 The realtime API is exposed at `GET /v1/realtime` via WebSocket.
 
+This endpoint currently implements bounded buffered realtime. It accepts live chunks and emits partial/final events, but the model path is not a true incremental streaming decoder. Session memory and final latency are bounded by `max_realtime_session_bytes` and `max_realtime_session_duration_ms`.
+
 ## Client Messages
 
 - `{"event":"start"}`: starts a realtime session and reserves capacity.
@@ -15,7 +17,7 @@ The realtime API is exposed at `GET /v1/realtime` via WebSocket.
 - `final`
 - `error`
 
-`partial` is best-effort and currently decoded from a bounded rolling recent window of the session audio. Partial updates use latest-wins backpressure: when the realtime inference slot is saturated, the service keeps at most one fresher follow-up partial instead of replaying a backlog of stale partial work. `final` remains strict and always waits for the realtime inference slot to transcribe the full bounded session buffer.
+`partial` is best-effort and currently decoded from a bounded rolling recent window of the session audio. Partial updates use latest-wins backpressure: when the realtime inference slot is saturated, the service keeps at most one fresher follow-up partial instead of replaying a backlog of stale partial work. This means partial updates are freshness-oriented and may not form a steady cadence. `final` remains strict and always waits for the realtime inference slot to transcribe the full bounded session buffer.
 `error` carries machine-readable `code` and human-readable `reason`.
 
 ## Example Session

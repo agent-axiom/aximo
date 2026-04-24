@@ -30,6 +30,32 @@ async fn openapi_document_is_served_as_json() {
 }
 
 #[tokio::test]
+async fn openapi_realtime_description_names_buffering_and_partial_semantics() {
+    let app = aximo::app::build_test_app().await;
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/openapi.json")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let json: Value = serde_json::from_slice(&body).unwrap();
+    let description = json["paths"]["/v1/realtime"]["get"]["responses"]["101"]["description"]
+        .as_str()
+        .unwrap();
+
+    assert!(description.contains("bounded buffered realtime"));
+    assert!(description.contains("latest-wins"));
+    assert!(description.contains("full bounded session buffer"));
+}
+
+#[tokio::test]
 async fn swagger_ui_is_served_as_html() {
     let app = aximo::app::build_test_app().await;
     let response = app

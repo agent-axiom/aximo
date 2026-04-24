@@ -143,8 +143,8 @@ Unsupported short-audio media types return `415 Unsupported Media Type` with cod
 
 ## Realtime Example
 
-Realtime uses WebSocket and raw `pcm_s16le`, `16 kHz`, mono binary chunks.
-Partial hypotheses are computed from a bounded rolling recent window, while the final transcription on `stop` uses the full buffered session audio.
+Realtime uses WebSocket and raw `pcm_s16le`, `16 kHz`, mono binary chunks. This is bounded buffered realtime, not a true incremental streaming decoder.
+Partial hypotheses are computed from a bounded rolling recent window and use latest-wins coalescing under load, so they favor freshness over a steady partial cadence. The final transcription on `stop` waits for the realtime inference slot and runs over the full bounded session buffer.
 Admission limits and inference limits are configured separately: `max_short_audio_requests` and `max_realtime_sessions` bound accepted work, while `max_short_inferences` and `max_realtime_inferences` bound actual concurrent model executions per engine instance.
 
 ```js

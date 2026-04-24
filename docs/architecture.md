@@ -36,6 +36,8 @@ sequenceDiagram
 
 ### Realtime
 
+Realtime is intentionally implemented as bounded buffered realtime. The service accepts live WebSocket chunks and emits partial/final events, but the current `transcribe-rs` path still runs bounded offline decodes rather than a true incremental streaming decoder.
+
 ```mermaid
 sequenceDiagram
     participant C as Client
@@ -77,4 +79,5 @@ sequenceDiagram
 - The current implementation supports `parakeet` and `gigaam` through `transcribe-rs`.
 - `max_short_audio_requests` and `max_realtime_sessions` bound admitted work.
 - `max_short_inferences` and `max_realtime_inferences` bound actual concurrent decodes and should reflect the number of usable engine instances.
-- Realtime partials are best-effort and latest-wins under saturation; final transcriptions remain strict.
+- Realtime partials are best-effort and latest-wins under saturation; final transcriptions remain strict and run against the full bounded session buffer.
+- `segments` and `detected_language` are capability-dependent response fields. The current `transcribe-rs` ONNX adapter path exposes plain transcript text, measured duration, and measured processing time, but not segment timestamps or real language detection.
