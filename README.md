@@ -265,7 +265,7 @@ Latency and RTF metrics are emitted as Prometheus histograms, so dashboards can 
 
 `/health/live` is process liveness. `/health/ready` reports aggregate readiness and per-component details such as `short:parakeet`, `realtime_partial:parakeet`, and `realtime_final:parakeet`. It returns `503` with a JSON `degraded` status after consecutive timeout/runtime/unavailable inference failures for any component reach `runtime_degrade_after_consecutive_failures`. A successful inference clears only its own component state. `runtime_degraded_policy = "readiness_only"` only signals orchestrators through readiness; `runtime_degraded_policy = "fail_fast_inference"` additionally rejects new inference work for degraded components with `engine_degraded`.
 
-On SIGINT or SIGTERM, Aximo stops accepting new connections through axum graceful shutdown and waits up to `shutdown_grace_period_ms`.
+On SIGINT or SIGTERM, Aximo notifies active websocket handlers, sends close frames, stops accepting new connections through axum graceful shutdown, and waits up to `shutdown_grace_period_ms`.
 
 ## Known Limits
 

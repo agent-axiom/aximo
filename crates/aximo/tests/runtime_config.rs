@@ -1,10 +1,13 @@
 use std::{fs, path::PathBuf};
 
 use aximo::{
-    config::Settings,
+    config::{RuntimeDegradedPolicy, Settings},
     runtime::{resolve_engine_spec, RuntimeConfigError},
 };
 use aximo_inference::runtime::EngineKind;
+use futures_util::{SinkExt, StreamExt};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio_tungstenite::{connect_async, tungstenite::Message};
 
 #[test]
 fn settings_can_be_loaded_from_toml_file() {
@@ -49,6 +52,7 @@ short_inference_timeout_ms = 90000
 realtime_partial_timeout_ms = 4000
 realtime_final_timeout_ms = 95000
 runtime_degrade_after_consecutive_failures = 6
+runtime_degraded_policy = "fail_fast_inference"
 "#,
     )
     .unwrap();
@@ -77,6 +81,10 @@ runtime_degrade_after_consecutive_failures = 6
     assert_eq!(
         settings.limits.runtime_degrade_after_consecutive_failures,
         6
+    );
+    assert_eq!(
+        settings.limits.runtime_degraded_policy,
+        RuntimeDegradedPolicy::FailFastInference
     );
 }
 
@@ -188,4 +196,87 @@ async fn runtime_server_exits_after_shutdown_signal() {
         .unwrap()
         .unwrap()
         .unwrap();
+}
+
+#[tokio::test]
+async fn runtime_server_stops_accepting_new_connections_after_shutdown_signal() {
+    let (app, app_shutdown) = aximo::app::build_test_app_with_shutdown().await;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+
+    let server = tokio::spawn(aximo::runtime::serve_with_shutdown_notifying_app(
+        listener,
+        app,
+        async move {
+            let _ = shutdown_rx.await;
+        },
+        std::time::Duration::from_secs(2),
+        app_shutdown,
+    ));
+
+    let response = raw_http_get(address, "/health/live").await.unwrap();
+    assert!(response.starts_with("HTTP/1.1 200 OK"));
+
+    shutdown_tx.send(()).unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(2), server)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+
+    assert!(tokio::net::TcpStream::connect(address).await.is_err());
+}
+
+#[tokio::test]
+async fn runtime_shutdown_drains_active_websocket_before_grace_deadline() {
+    let (app, app_shutdown) = aximo::app::build_test_app_with_shutdown().await;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+
+    let server = tokio::spawn(aximo::runtime::serve_with_shutdown_notifying_app(
+        listener,
+        app,
+        async move {
+            let _ = shutdown_rx.await;
+        },
+        std::time::Duration::from_millis(25),
+        app_shutdown,
+    ));
+    let (mut socket, _) = connect_async(format!("ws://{address}/v1/realtime"))
+        .await
+        .unwrap();
+    socket
+        .send(Message::Text(r#"{"event":"start"}"#.into()))
+        .await
+        .unwrap();
+    let started = socket.next().await.unwrap().unwrap();
+    assert!(started.is_text());
+
+    shutdown_tx.send(()).unwrap();
+    let close = tokio::time::timeout(std::time::Duration::from_secs(2), socket.next())
+        .await
+        .unwrap();
+    assert!(close.is_none() || close.unwrap().unwrap().is_close());
+
+    tokio::time::timeout(std::time::Duration::from_secs(2), server)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+}
+
+async fn raw_http_get(address: std::net::SocketAddr, path: &str) -> std::io::Result<String> {
+    let mut stream = tokio::net::TcpStream::connect(address).await?;
+    stream
+        .write_all(
+            format!("GET {path} HTTP/1.1\r\nHost: {address}\r\nConnection: close\r\n\r\n")
+                .as_bytes(),
+        )
+        .await?;
+
+    let mut response = String::new();
+    stream.read_to_string(&mut response).await?;
+    Ok(response)
 }

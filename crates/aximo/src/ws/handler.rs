@@ -10,7 +10,7 @@ use axum::{
     response::IntoResponse,
 };
 use futures_util::{SinkExt, StreamExt};
-use tokio::sync::{mpsc, mpsc::error::TrySendError};
+use tokio::sync::{mpsc, mpsc::error::TrySendError, oneshot};
 
 use crate::{
     app::AppState,
@@ -23,6 +23,7 @@ const REALTIME_PARTIAL_WINDOW_BYTES: usize = 160_000;
 const PCM_SAMPLE_RATE: u64 = 16_000;
 const PCM_BYTES_PER_SAMPLE: usize = 2;
 const WRITER_DRAIN_TIMEOUT: Duration = Duration::from_millis(100);
+const CLOSE_FRAME_LINGER: Duration = Duration::from_millis(25);
 
 pub async fn realtime_socket(
     ws: WebSocketUpgrade,
@@ -36,15 +37,29 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
     let (event_tx, mut event_rx) =
         mpsc::channel::<ServerEvent>(state.realtime_event_channel_capacity);
     let (overflow_tx, mut overflow_rx) = mpsc::channel::<()>(1);
+    let (close_tx, mut close_rx) = oneshot::channel::<()>();
     let mut writer = tokio::spawn(async move {
-        while let Some(event) = event_rx.recv().await {
-            let message = serde_json::to_string(&event).expect("serialize websocket event");
-            if sender.send(Message::Text(message.into())).await.is_err() {
-                break;
+        loop {
+            tokio::select! {
+                _ = &mut close_rx => {
+                    let _ = sender.send(Message::Close(None)).await;
+                    tokio::time::sleep(CLOSE_FRAME_LINGER).await;
+                    break;
+                }
+                event = event_rx.recv() => {
+                    let Some(event) = event else {
+                        break;
+                    };
+                    let message = serde_json::to_string(&event).expect("serialize websocket event");
+                    if sender.send(Message::Text(message.into())).await.is_err() {
+                        break;
+                    }
+                }
             }
         }
     });
     let mut active_session_id: Option<String> = None;
+    let mut shutdown = state.shutdown.subscribe();
 
     loop {
         macro_rules! queue_or_break {
@@ -56,6 +71,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
         }
 
         let message = tokio::select! {
+            _ = shutdown.changed() => break,
             _ = overflow_rx.recv() => break,
             message = receiver.next() => message,
         };
@@ -242,6 +258,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
     }
 
     cleanup_active_session(&state, &mut active_session_id);
+    let _ = close_tx.send(());
     drop(event_tx);
     tokio::select! {
         result = &mut writer => {

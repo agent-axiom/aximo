@@ -14,6 +14,8 @@ use tokio::sync::oneshot;
 
 use crate::config::Settings;
 
+const APP_SHUTDOWN_DRAIN: Duration = Duration::from_millis(25);
+
 #[derive(Debug, Error)]
 pub enum RuntimeConfigError {
     #[error("engine {0} is not configured")]
@@ -80,9 +82,17 @@ pub async fn run_service() -> anyhow::Result<()> {
     let bind_address = format!("{}:{}", settings.server.host, settings.server.port);
     let listener = tokio::net::TcpListener::bind(&bind_address).await?;
     let shutdown_grace_period = Duration::from_millis(settings.server.shutdown_grace_period_ms);
-    let app = crate::app::build_app(settings, offline_engine, realtime_engine);
+    let (app, app_shutdown) =
+        crate::app::build_app_with_shutdown(settings, offline_engine, realtime_engine);
 
-    serve_with_shutdown(listener, app, shutdown_signal(), shutdown_grace_period).await?;
+    serve_with_shutdown_notifying_app(
+        listener,
+        app,
+        shutdown_signal(),
+        shutdown_grace_period,
+        app_shutdown,
+    )
+    .await?;
     Ok(())
 }
 
@@ -95,11 +105,48 @@ pub async fn serve_with_shutdown<F>(
 where
     F: Future<Output = ()> + Send + 'static,
 {
+    serve_with_shutdown_inner(listener, app, shutdown, shutdown_grace_period, None).await
+}
+
+pub async fn serve_with_shutdown_notifying_app<F>(
+    listener: tokio::net::TcpListener,
+    app: Router,
+    shutdown: F,
+    shutdown_grace_period: Duration,
+    app_shutdown: crate::app::ShutdownHandle,
+) -> anyhow::Result<()>
+where
+    F: Future<Output = ()> + Send + 'static,
+{
+    serve_with_shutdown_inner(
+        listener,
+        app,
+        shutdown,
+        shutdown_grace_period,
+        Some(app_shutdown),
+    )
+    .await
+}
+
+async fn serve_with_shutdown_inner<F>(
+    listener: tokio::net::TcpListener,
+    app: Router,
+    shutdown: F,
+    shutdown_grace_period: Duration,
+    app_shutdown: Option<crate::app::ShutdownHandle>,
+) -> anyhow::Result<()>
+where
+    F: Future<Output = ()> + Send + 'static,
+{
     let (server_shutdown_tx, server_shutdown_rx) = oneshot::channel::<()>();
     let (grace_started_tx, grace_started_rx) = oneshot::channel::<()>();
 
     tokio::spawn(async move {
         shutdown.await;
+        if let Some(app_shutdown) = app_shutdown {
+            app_shutdown.notify();
+            tokio::time::sleep(APP_SHUTDOWN_DRAIN).await;
+        }
         let _ = grace_started_tx.send(());
         let _ = server_shutdown_tx.send(());
     });

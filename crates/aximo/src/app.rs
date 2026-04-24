@@ -4,6 +4,7 @@ use aximo_audio::ShortAudioLimits;
 use aximo_core::{RealtimePartialLimits, RealtimeSessionLimits, Scheduler, SessionManager};
 use aximo_inference::engine::{FakeEngine, SpeechEngine};
 use axum::{extract::DefaultBodyLimit, Router};
+use tokio::sync::watch;
 
 use crate::{
     config::{RuntimeDegradedPolicy, Settings},
@@ -32,12 +33,54 @@ pub struct AppState {
     pub metrics: Metrics,
     pub runtime_health: RuntimeHealth,
     pub runtime_degraded_policy: RuntimeDegradedPolicy,
+    pub shutdown: ShutdownHandle,
+}
+
+#[derive(Clone)]
+pub struct ShutdownHandle {
+    sender: watch::Sender<bool>,
+}
+
+impl ShutdownHandle {
+    pub fn new() -> Self {
+        let (sender, _receiver) = watch::channel(false);
+        Self { sender }
+    }
+
+    pub fn subscribe(&self) -> watch::Receiver<bool> {
+        self.sender.subscribe()
+    }
+
+    pub fn notify(&self) {
+        let _ = self.sender.send(true);
+    }
 }
 
 pub fn build_app(
     settings: Settings,
     offline_engine: Arc<dyn SpeechEngine>,
     realtime_engine: Arc<dyn SpeechEngine>,
+) -> Router {
+    let (router, _shutdown) = build_app_with_shutdown(settings, offline_engine, realtime_engine);
+    router
+}
+
+pub fn build_app_with_shutdown(
+    settings: Settings,
+    offline_engine: Arc<dyn SpeechEngine>,
+    realtime_engine: Arc<dyn SpeechEngine>,
+) -> (Router, ShutdownHandle) {
+    let shutdown = ShutdownHandle::new();
+    let router =
+        build_app_with_shutdown_handle(settings, offline_engine, realtime_engine, shutdown.clone());
+    (router, shutdown)
+}
+
+fn build_app_with_shutdown_handle(
+    settings: Settings,
+    offline_engine: Arc<dyn SpeechEngine>,
+    realtime_engine: Arc<dyn SpeechEngine>,
+    shutdown: ShutdownHandle,
 ) -> Router {
     let short_audio_body_limit = settings.limits.max_short_audio_bytes;
     let offline_engine_name = settings.inference.default_offline_engine.clone();
@@ -92,6 +135,7 @@ pub fn build_app(
             settings.limits.runtime_degrade_after_consecutive_failures,
         ),
         runtime_degraded_policy: settings.limits.runtime_degraded_policy,
+        shutdown,
     };
 
     Router::new()
@@ -113,6 +157,14 @@ pub fn build_app(
 
 pub async fn build_test_app() -> Router {
     build_app(
+        Settings::default(),
+        Arc::new(FakeEngine),
+        Arc::new(FakeEngine),
+    )
+}
+
+pub async fn build_test_app_with_shutdown() -> (Router, ShutdownHandle) {
+    build_app_with_shutdown(
         Settings::default(),
         Arc::new(FakeEngine),
         Arc::new(FakeEngine),
