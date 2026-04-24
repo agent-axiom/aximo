@@ -50,10 +50,9 @@ pub async fn transcribe_short(
     headers: HeaderMap,
     body: Result<Bytes, BytesRejection>,
 ) -> Result<Json<ShortAudioResult>, HttpError> {
-    let body = body.map_err(map_body_rejection).map_err(|error| {
-        record_http_error(&state, &error);
-        error
-    })?;
+    let body = body
+        .map_err(map_body_rejection)
+        .inspect_err(|error| record_http_error(&state, error))?;
     state.metrics.record_audio_body_bytes(body.len());
 
     let _request_permit = state
@@ -66,10 +65,7 @@ pub async fn transcribe_short(
                 "short-audio request capacity exhausted",
             )
         })
-        .map_err(|error| {
-            record_http_error(&state, &error);
-            error
-        })?;
+        .inspect_err(|error| record_http_error(&state, error))?;
 
     let content_type = headers
         .get(axum::http::header::CONTENT_TYPE)
@@ -83,10 +79,11 @@ pub async fn transcribe_short(
         state.short_audio_limits,
     )
     .map_err(map_audio_error)
-    .map_err(|error| {
-        state.metrics.record_audio_decode(decode_started_at.elapsed(), None);
-        record_http_error(&state, &error);
-        error
+    .inspect_err(|error| {
+        state
+            .metrics
+            .record_audio_decode(decode_started_at.elapsed(), None);
+        record_http_error(&state, error);
     })?;
     state.metrics.record_audio_decode(
         decode_started_at.elapsed(),
@@ -102,17 +99,17 @@ pub async fn transcribe_short(
         timestamps: false,
     };
 
-    let _inference_permit = state.scheduler.try_acquire_short_inference().map_err(|_| {
-        HttpError::new(
-            StatusCode::TOO_MANY_REQUESTS,
-            "short_audio_inference_capacity_exhausted",
-            "short-audio inference capacity exhausted",
-        )
-    })
-    .map_err(|error| {
-        record_http_error(&state, &error);
-        error
-    })?;
+    let _inference_permit = state
+        .scheduler
+        .try_acquire_short_inference()
+        .map_err(|_| {
+            HttpError::new(
+                StatusCode::TOO_MANY_REQUESTS,
+                "short_audio_inference_capacity_exhausted",
+                "short-audio inference capacity exhausted",
+            )
+        })
+        .inspect_err(|error| record_http_error(&state, error))?;
     let inference_started_at = Instant::now();
     let result = run_blocking_inference_with_timeout(
         state.offline_engine.clone(),
@@ -150,11 +147,7 @@ fn map_body_rejection(error: BytesRejection) -> HttpError {
         );
     }
 
-    HttpError::new(
-        error.status(),
-        "invalid_request_body",
-        error.body_text(),
-    )
+    HttpError::new(error.status(), "invalid_request_body", error.body_text())
 }
 
 fn map_audio_error(error: AudioError) -> HttpError {

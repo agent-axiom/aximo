@@ -448,7 +448,10 @@ async fn transcription_endpoint_returns_unsupported_media_type_for_missing_conte
     let json: Value = serde_json::from_slice(&body).unwrap();
 
     assert_eq!(json["code"], "unsupported_media_type");
-    assert_eq!(json["message"], "unsupported media type: missing content type");
+    assert_eq!(
+        json["message"],
+        "unsupported media type: missing content type"
+    );
 }
 
 #[tokio::test]

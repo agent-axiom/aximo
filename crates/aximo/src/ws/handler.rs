@@ -296,10 +296,7 @@ fn spawn_partial_inference(
                         &state,
                         &event_tx,
                         &overflow_tx,
-                        map_realtime_inference_error(
-                            error,
-                            "realtime partial inference timed out",
-                        ),
+                        map_realtime_inference_error(error, "realtime partial inference timed out"),
                     ) {
                         let _ = overflow_tx.try_send(());
                         break;
@@ -398,7 +395,10 @@ mod tests {
     fn queue_event_reports_full_bounded_channel() {
         let (event_tx, _event_rx) = mpsc::channel(1);
 
-        assert_eq!(queue_event(&event_tx, ServerEvent::partial_text("first")), Ok(()));
+        assert_eq!(
+            queue_event(&event_tx, ServerEvent::partial_text("first")),
+            Ok(())
+        );
         assert_eq!(
             queue_event(&event_tx, ServerEvent::partial_text("second")),
             Err(QueueEventError::Full)

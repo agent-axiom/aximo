@@ -160,8 +160,7 @@ impl Metrics {
         }
 
         for (kind, value) in &state.rtf_sum {
-            writeln!(output, "aximo_rtf_sum{{kind=\"{kind}\"}} {value:.9}")
-                .expect("write metrics");
+            writeln!(output, "aximo_rtf_sum{{kind=\"{kind}\"}} {value:.9}").expect("write metrics");
         }
 
         writeln!(

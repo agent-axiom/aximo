@@ -46,9 +46,7 @@ pub fn parse_audio_media_type(content_type: &str) -> Result<AudioMediaType, Audi
     }
 
     match media_type.as_str() {
-        "audio/wav" | "audio/wave" | "audio/x-wav" | "audio/vnd.wave" => {
-            Ok(AudioMediaType::Wav)
-        }
+        "audio/wav" | "audio/wave" | "audio/x-wav" | "audio/vnd.wave" => Ok(AudioMediaType::Wav),
         "audio/mpeg" | "audio/mp3" => Ok(AudioMediaType::Mp3),
         "audio/flac" | "audio/x-flac" => Ok(AudioMediaType::Flac),
         "audio/mp4" | "audio/m4a" | "audio/x-m4a" | "audio/aac" | "audio/aacp" => {
