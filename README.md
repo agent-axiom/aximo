@@ -75,6 +75,26 @@ AXIMO_CONFIG=config/aximo.local.toml cargo run -p aximo
 
 For containerized usage, [config/aximo.example.toml](config/aximo.example.toml) remains the default and expects models at `/var/lib/aximo/models`.
 
+## Configuration
+
+`AXIMO_CONFIG` points to a TOML config file. If it is not set, built-in defaults are used. Individual fields can be overridden with environment variables after the TOML file is loaded, which is useful for Docker and Kubernetes deployments:
+
+```bash
+AXIMO_SERVER_HOST=0.0.0.0
+AXIMO_SERVER_PORT=8080
+AXIMO_MODELS_DIR=/var/lib/aximo/models
+AXIMO_DEFAULT_OFFLINE_ENGINE=parakeet
+AXIMO_DEFAULT_REALTIME_ENGINE=parakeet
+AXIMO_MAX_SHORT_AUDIO_REQUESTS=8
+AXIMO_MAX_REALTIME_SESSIONS=24
+AXIMO_MAX_SHORT_INFERENCES=1
+AXIMO_MAX_REALTIME_INFERENCES=1
+AXIMO_MAX_REALTIME_SESSION_BYTES=1920000
+AXIMO_MAX_REALTIME_SESSION_DURATION_MS=60000
+AXIMO_REALTIME_PARTIAL_MIN_INTERVAL_MS=300
+AXIMO_REALTIME_PARTIAL_MIN_CHUNK_BYTES=9600
+```
+
 ## Short Audio Example
 
 Short transcription currently accepts:
