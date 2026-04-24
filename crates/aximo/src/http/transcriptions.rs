@@ -3,7 +3,7 @@ use aximo_core::{ShortAudioRequest, ShortAudioResult};
 use aximo_inference::engine::InferenceError;
 use axum::{
     body::Bytes,
-    extract::State,
+    extract::{rejection::BytesRejection, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     Json,
@@ -44,7 +44,7 @@ impl IntoResponse for HttpError {
 pub async fn transcribe_short(
     State(state): State<AppState>,
     headers: HeaderMap,
-    body: Bytes,
+    body: Result<Bytes, BytesRejection>,
 ) -> Result<Json<ShortAudioResult>, HttpError> {
     let _request_permit = state
         .scheduler
@@ -56,6 +56,7 @@ pub async fn transcribe_short(
                 "short-audio request capacity exhausted",
             )
         })?;
+    let body = body.map_err(map_body_rejection)?;
 
     let content_type = headers
         .get(axum::http::header::CONTENT_TYPE)
@@ -89,6 +90,22 @@ pub async fn transcribe_short(
         .await
         .map(Json)
         .map_err(map_inference_error)
+}
+
+fn map_body_rejection(error: BytesRejection) -> HttpError {
+    if error.status() == StatusCode::PAYLOAD_TOO_LARGE {
+        return HttpError::new(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "payload_too_large",
+            "request body exceeds max_short_audio_bytes",
+        );
+    }
+
+    HttpError::new(
+        error.status(),
+        "invalid_request_body",
+        error.body_text(),
+    )
 }
 
 fn map_audio_error(error: AudioError) -> HttpError {

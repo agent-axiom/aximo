@@ -386,6 +386,14 @@ async fn transcription_endpoint_returns_payload_too_large_for_http_body_limit() 
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let json: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["code"], "payload_too_large");
+    assert_eq!(
+        json["message"],
+        "request body exceeds max_short_audio_bytes"
+    );
 }
 
 #[tokio::test]
