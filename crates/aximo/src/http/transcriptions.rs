@@ -89,8 +89,8 @@ pub async fn transcribe_short(
         .unwrap_or_default()
         .to_string();
     let decode_started_at = Instant::now();
-    let prepared_audio = aximo_audio::prepare_short_audio_with_limits(
-        body.as_ref(),
+    let prepared_audio = aximo_audio::prepare_short_audio_bytes_with_limits(
+        body,
         &content_type,
         state.short_audio_limits,
     )

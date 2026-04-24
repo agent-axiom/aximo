@@ -1,9 +1,10 @@
 use std::io::Cursor;
 
+use bytes::Bytes;
 use hound::{SampleFormat, WavReader};
 
 use crate::{
-    decode_container_with_sample_limit, parse_audio_media_type, AudioError, AudioMediaType,
+    decode_container_bytes_with_sample_limit, parse_audio_media_type, AudioError, AudioMediaType,
     DecodedAudio,
 };
 
@@ -43,19 +44,27 @@ pub fn prepare_short_audio_with_limits(
     content_type: &str,
     limits: ShortAudioLimits,
 ) -> Result<PreparedAudio, AudioError> {
+    prepare_short_audio_bytes_with_limits(Bytes::copy_from_slice(bytes), content_type, limits)
+}
+
+pub fn prepare_short_audio_bytes_with_limits(
+    bytes: Bytes,
+    content_type: &str,
+    limits: ShortAudioLimits,
+) -> Result<PreparedAudio, AudioError> {
     let media_type = parse_audio_media_type(content_type)?;
 
     match media_type {
         AudioMediaType::RawPcm => {
-            validate_raw_pcm(bytes, limits)?;
+            validate_raw_pcm(bytes.as_ref(), limits)?;
             return Ok(PreparedAudio {
                 audio_bytes: bytes.to_vec(),
                 content_type: AudioMediaType::RawPcm.canonical_content_type(),
-                duration_ms: raw_pcm_duration_ms(bytes),
+                duration_ms: raw_pcm_duration_ms(bytes.as_ref()),
             });
         }
         AudioMediaType::Wav => {
-            let wav_info = wav_info(bytes)?;
+            let wav_info = wav_info(bytes.as_ref())?;
             if wav_info.is_passthrough {
                 validate_duration_ms(wav_info.duration_ms, limits)?;
                 return Ok(PreparedAudio {
@@ -69,7 +78,7 @@ pub fn prepare_short_audio_with_limits(
     }
 
     let decoded =
-        decode_container_with_sample_limit(bytes, content_type, limits.max_decoded_samples)?;
+        decode_container_bytes_with_sample_limit(bytes, content_type, limits.max_decoded_samples)?;
     let duration_ms = decoded_duration_ms(&decoded);
     validate_duration_ms(duration_ms, limits)?;
     let audio_bytes = normalize_decoded_audio(decoded);
@@ -271,6 +280,19 @@ mod tests {
         let wav = fixture_bytes("tone-44k-stereo.wav");
 
         let prepared = prepare_short_audio(&wav, "audio/wav").unwrap();
+
+        assert_eq!(prepared.content_type, "audio/pcm");
+        assert_eq!(prepared.audio_bytes.len() % 2, 0);
+        assert!(!prepared.audio_bytes.is_empty());
+    }
+
+    #[test]
+    fn bytes_input_is_decoded_and_resampled_to_pcm() {
+        let wav = Bytes::from(fixture_bytes("tone-44k-stereo.wav"));
+
+        let prepared =
+            prepare_short_audio_bytes_with_limits(wav, "audio/wav", ShortAudioLimits::unbounded())
+                .unwrap();
 
         assert_eq!(prepared.content_type, "audio/pcm");
         assert_eq!(prepared.audio_bytes.len() % 2, 0);

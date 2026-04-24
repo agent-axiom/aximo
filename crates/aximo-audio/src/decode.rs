@@ -1,5 +1,6 @@
 use std::io::{Cursor, ErrorKind};
 
+use bytes::Bytes;
 use symphonia::core::{
     audio::SampleBuffer, codecs::DecoderOptions, errors::Error as SymphoniaError,
     formats::FormatOptions, io::MediaSourceStream, meta::MetadataOptions, probe::Hint,
@@ -37,11 +38,22 @@ pub fn decode_container_with_sample_limit(
     content_type: &str,
     max_decoded_samples: usize,
 ) -> Result<DecodedAudio, AudioError> {
+    decode_container_bytes_with_sample_limit(
+        Bytes::copy_from_slice(bytes),
+        content_type,
+        max_decoded_samples,
+    )
+}
+
+pub fn decode_container_bytes_with_sample_limit(
+    bytes: Bytes,
+    content_type: &str,
+    max_decoded_samples: usize,
+) -> Result<DecodedAudio, AudioError> {
     let mut hint = Hint::new();
     hint.with_extension(extension_hint(content_type)?);
 
-    let media_source =
-        MediaSourceStream::new(Box::new(Cursor::new(bytes.to_vec())), Default::default());
+    let media_source = MediaSourceStream::new(Box::new(Cursor::new(bytes)), Default::default());
     let probed = get_probe()
         .format(
             &hint,
@@ -157,6 +169,20 @@ mod tests {
     #[test]
     fn decode_container_reads_wav_fixture_samples() {
         let decoded = decode_container(&fixture_bytes("tone-16k-mono.wav"), "audio/wav").unwrap();
+
+        assert_eq!(decoded.sample_rate, 16_000);
+        assert_eq!(decoded.channels, 1);
+        assert!(!decoded.samples.is_empty());
+    }
+
+    #[test]
+    fn decode_container_bytes_reads_wav_fixture_samples() {
+        let decoded = decode_container_bytes_with_sample_limit(
+            Bytes::from(fixture_bytes("tone-16k-mono.wav")),
+            "audio/wav",
+            usize::MAX,
+        )
+        .unwrap();
 
         assert_eq!(decoded.sample_rate, 16_000);
         assert_eq!(decoded.channels, 1);

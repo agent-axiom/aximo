@@ -11,6 +11,7 @@ rust-version.workspace = true
 version.workspace = true
 
 [dependencies]
+bytes.workspace = true
 hound.workspace = true
 symphonia.workspace = true
 thiserror.workspace = true
