@@ -128,6 +128,18 @@ curl -X POST http://127.0.0.1:8080/v1/transcriptions \
   --data-binary @sample.wav
 ```
 
+Optional query parameters are accepted for API compatibility and forwarded to the engine request:
+
+- `engine`: must match the configured short-audio engine for this service instance, for example `parakeet`.
+- `language` or `language_hint`: optional backend language hint such as `ru`, `en`, or `auto`; `language_hint` wins when both are supplied.
+- `timestamps`: requests timestamp metadata when the backend supports it. The current `transcribe-rs` ONNX adapter is text-only, so `segments` still remains empty.
+
+```bash
+curl -X POST 'http://127.0.0.1:8080/v1/transcriptions?engine=parakeet&language=ru&timestamps=true' \
+  -H 'content-type: audio/wav' \
+  --data-binary @sample.wav
+```
+
 Example response:
 
 ```json
@@ -229,23 +241,27 @@ If container logs include `onnxruntime cpuid_info warning: Unknown CPU vendor`, 
 - `aximo_http_requests_total{status,code}`
 - `aximo_errors_total{code}`
 - `aximo_audio_body_bytes_total`
-- `aximo_audio_decode_seconds_sum/count`
-- `aximo_audio_duration_seconds_sum/count`
-- `aximo_inference_wait_seconds_sum/count{kind}`
-- `aximo_model_execution_wait_seconds_sum/count{kind}`
-- `aximo_inference_seconds_sum/count{kind}`
-- `aximo_rtf_sum/count{kind}`
+- `aximo_audio_decode_seconds_bucket/sum/count`
+- `aximo_audio_duration_seconds_bucket/sum/count`
+- `aximo_inference_wait_seconds_bucket/sum/count{kind}`
+- `aximo_model_execution_wait_seconds_bucket/sum/count{kind}`
+- `aximo_inference_seconds_bucket/sum/count{kind}`
+- `aximo_rtf_bucket/sum/count{kind}`
 - `aximo_inference_timeouts_total{kind}`
 - `aximo_blocking_tasks_active`
 - `aximo_model_executions_active`
 - `aximo_runtime_degraded`
 - `aximo_runtime_consecutive_failures`
+- `aximo_runtime_component_degraded{component}`
+- `aximo_runtime_component_consecutive_failures{component}`
 - `aximo_ws_sessions_active`
 - `aximo_ws_queue_overflows_total`
 - `aximo_realtime_partial_coalesced_total`
 - `aximo_realtime_stale_partial_skips_total`
 
-`/health/live` is process liveness. `/health/ready` reports readiness and returns `503` with a JSON `degraded` status after consecutive timeout/runtime/unavailable inference failures reach `runtime_degrade_after_consecutive_failures`. A successful inference clears the degraded state.
+Latency and RTF metrics are emitted as Prometheus histograms, so dashboards can use `histogram_quantile()` for p95/p99 without depending only on averages.
+
+`/health/live` is process liveness. `/health/ready` reports aggregate readiness and per-component details such as `short:parakeet`, `realtime_partial:parakeet`, and `realtime_final:parakeet`. It returns `503` with a JSON `degraded` status after consecutive timeout/runtime/unavailable inference failures for any component reach `runtime_degrade_after_consecutive_failures`. A successful inference clears only its own component state.
 
 On SIGINT or SIGTERM, Aximo stops accepting new connections through axum graceful shutdown and waits up to `shutdown_grace_period_ms`.
 
@@ -253,8 +269,9 @@ On SIGINT or SIGTERM, Aximo stops accepting new connections through axum gracefu
 
 - Realtime is bounded buffered realtime, not a true streaming decoder.
 - The current `transcribe-rs` ONNX adapter path returns plain text; `segments` stays empty and `detected_language` stays `null` until backend metadata is exposed.
+- Container decode now avoids an extra input-buffer copy from axum `Bytes`, but decoded samples are still materialized in memory before normalization.
 - Audio resampling is intentionally simple for MVP use; production WER/CER work should evaluate a higher-quality resampler.
-- Future hardening candidates: per-request options, timestamp/language support, cargo-audit/cargo-deny, SBOM, and k8s manifests.
+- Future hardening candidates: benchmark suite, timestamp/language support, true streaming decoder backend, cargo-audit/cargo-deny, SBOM, and k8s manifests.
 
 ## Development
 

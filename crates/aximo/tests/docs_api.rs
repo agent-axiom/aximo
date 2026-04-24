@@ -29,6 +29,13 @@ async fn openapi_document_is_served_as_json() {
     assert!(json["paths"]["/health/ready"].is_object());
     assert!(json["paths"]["/health/ready"]["get"]["responses"]["503"].is_object());
     assert!(json["paths"]["/v1/transcriptions"]["post"]["responses"]["504"].is_object());
+    assert!(json["paths"]["/v1/transcriptions"]["post"]["parameters"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|parameter| parameter["name"] == "engine"));
+    assert!(json["components"]["schemas"]["ReadinessDoc"]["properties"]["components"].is_object());
+    assert!(json["components"]["schemas"]["ComponentReadinessDoc"].is_object());
     assert!(json["paths"]["/v1/realtime"].is_object());
 }
 

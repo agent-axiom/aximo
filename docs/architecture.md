@@ -22,15 +22,18 @@ flowchart LR
 sequenceDiagram
     participant C as Client
     participant A as aximo
+    participant D as Audio Decode
     participant S as Scheduler
     participant E as Offline Engine
 
-    C->>A: POST /v1/transcriptions
+    C->>A: POST /v1/transcriptions?engine=...&language=...&timestamps=...
     A->>S: acquire short request permit
     S-->>A: request permit
+    A->>D: validate/decode/normalize axum Bytes
+    D-->>A: bounded pcm_s16le audio
     A->>S: acquire short inference permit
     S-->>A: inference permit
-    A->>E: transcribe_short()
+    A->>E: transcribe_short(options + audio)
     E-->>A: transcript
     A-->>C: JSON response
 ```
@@ -81,11 +84,13 @@ sequenceDiagram
 - `max_short_audio_requests` and `max_realtime_sessions` bound admitted work.
 - `max_short_inferences` and `max_realtime_inferences` bound per-path inference admission and should reflect how much work the service should queue toward each path.
 - When the same offline and realtime engine config resolves to the same backend/model path, Aximo reuses one engine instance to avoid loading duplicate model copies. That saves RAM. Actual backend calls are additionally protected by a per-engine execution gate that is shared by offline and realtime when they share an engine `Arc`; the gate remains held until a blocking backend call exits, even if the client already received a timeout.
+- `POST /v1/transcriptions` accepts `engine`, `language`/`language_hint`, and `timestamps` query options. `engine` must match the configured offline engine for the service instance; metadata options are forwarded but remain backend-capability dependent.
+- Short-audio container decode takes axum `Bytes` directly to avoid an extra input-buffer copy. Decoded samples are still materialized in memory before normalization and are bounded by configured sample/duration/body limits.
 - Realtime partials are best-effort and latest-wins under saturation; final transcriptions remain strict and run against the full bounded session buffer.
 - `segments` and `detected_language` are capability-dependent response fields. The current `transcribe-rs` ONNX adapter path exposes plain transcript text, measured duration, and measured processing time, but not segment timestamps or real language detection.
 
 ## Observability
 
-`GET /metrics` returns Prometheus-compatible text metrics for request status/code counts, error codes, audio body size, decoded audio duration, decode time, scheduler wait, model execution wait, inference wall time, realtime factor, inference timeouts, active blocking tasks, active model executions, active websocket sessions, queue overflows, stale partial skips, and coalesced realtime partials.
+`GET /metrics` returns Prometheus-compatible text metrics for request status/code counts, error codes, audio body size, decoded audio duration, decode time, scheduler wait, model execution wait, inference wall time, realtime factor, inference timeouts, active blocking tasks, active model executions, runtime component health, active websocket sessions, queue overflows, stale partial skips, and coalesced realtime partials. Decode, duration, wait, inference, and RTF series are emitted as histograms with `_bucket`, `_sum`, and `_count`.
 
-`GET /health/live` is process liveness. `GET /health/ready` reflects runtime health and returns `503` after consecutive timeout/runtime/unavailable inference failures cross the configured degradation threshold.
+`GET /health/live` is process liveness. `GET /health/ready` reflects runtime health and returns `503` after consecutive timeout/runtime/unavailable inference failures cross the configured degradation threshold for any component. Health is tracked per component key, for example `short:parakeet`, `realtime_partial:parakeet`, and `realtime_final:parakeet`; successful inference clears only the component that succeeded.

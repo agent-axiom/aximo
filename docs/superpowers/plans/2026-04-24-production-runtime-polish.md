@@ -22,15 +22,15 @@
 - Test: `crates/aximo/tests/health_api.rs`
 - Test: `crates/aximo/tests/metrics_api.rs`
 
-- [ ] Write failing health tests proving `short:parakeet` degradation does not mark `realtime_partial:parakeet` degraded and a realtime success does not clear short failures.
-- [ ] Change `RuntimeHealthState` to store per-component state in a `BTreeMap<String, ComponentState>`.
-- [ ] Add `record_success(component)` and `record_failure(component, reason)`.
-- [ ] Add engine names to `AppState` from `Settings.inference.default_*_engine`.
-- [ ] Record short/realtime health using component keys `short:<engine>`, `realtime_partial:<engine>`, and `realtime_final:<engine>`.
-- [ ] Render readiness JSON with aggregate status plus component details.
-- [ ] Render per-component runtime health metrics.
-- [ ] Run targeted health and metrics tests.
-- [ ] Commit as `Track runtime health per engine path`.
+- [x] Write failing health tests proving `short:parakeet` degradation does not mark `realtime_partial:parakeet` degraded and a realtime success does not clear short failures.
+- [x] Change `RuntimeHealthState` to store per-component state in a `BTreeMap<String, ComponentState>`.
+- [x] Add `record_success(component)` and `record_failure(component, reason)`.
+- [x] Add engine names to `AppState` from `Settings.inference.default_*_engine`.
+- [x] Record short/realtime health using component keys `short:<engine>`, `realtime_partial:<engine>`, and `realtime_final:<engine>`.
+- [x] Render readiness JSON with aggregate status plus component details.
+- [x] Render per-component runtime health metrics.
+- [x] Run targeted health and metrics tests.
+- [x] Commit as `Track runtime health per engine path`.
 
 ### Task 2: Integration Regression Tests For Critical Runtime Guarantees
 
@@ -38,10 +38,10 @@
 - Modify: `crates/aximo/tests/transcriptions_api.rs`
 - Modify: `crates/aximo/tests/realtime_protocol.rs`
 
-- [ ] Add HTTP integration test proving a timed-out short request keeps the model gate occupied until its backend call returns.
-- [ ] Add websocket integration test for bounded event queue overflow/disconnect behavior with `realtime_event_channel_capacity = 1`.
-- [ ] Run targeted integration tests.
-- [ ] Commit as `Add runtime backpressure regression tests`.
+- [x] Add HTTP integration test proving a timed-out short request keeps the model gate occupied until its backend call returns.
+- [x] Add websocket integration test for bounded event queue overflow/disconnect behavior with `realtime_event_channel_capacity = 1`.
+- [x] Run targeted integration tests.
+- [x] Commit as `Add runtime backpressure regression tests`.
 
 ### Task 3: Histogram Buckets For SLO-Friendly Metrics
 
@@ -49,11 +49,11 @@
 - Modify: `crates/aximo/src/metrics.rs`
 - Test: `crates/aximo/tests/metrics_api.rs`
 
-- [ ] Add fixed histogram buckets for decode seconds, audio duration seconds, scheduler wait seconds, model execution wait seconds, inference seconds, and RTF.
-- [ ] Keep existing `_sum` and `_count` series for compatibility.
-- [ ] Emit Prometheus `_bucket{le="..."}` and `_bucket{le="+Inf"}` series.
-- [ ] Run metrics tests.
-- [ ] Commit as `Add histogram buckets to runtime metrics`.
+- [x] Add fixed histogram buckets for decode seconds, audio duration seconds, scheduler wait seconds, model execution wait seconds, inference seconds, and RTF.
+- [x] Keep existing `_sum` and `_count` series for compatibility.
+- [x] Emit Prometheus `_bucket{le="..."}` and `_bucket{le="+Inf"}` series.
+- [x] Run metrics tests.
+- [x] Commit as `Add Prometheus histogram buckets`.
 
 ### Task 4: Short-Audio Request Options
 
@@ -64,13 +64,13 @@
 - Test: `crates/aximo/tests/transcriptions_api.rs`
 - Test: `crates/aximo/tests/docs_api.rs`
 
-- [ ] Add failing test proving `?language=ru&timestamps=true&engine=parakeet` is forwarded into `ShortAudioRequest`.
-- [ ] Add failing test proving an unsupported `engine` query value returns structured `400 unsupported_engine`.
-- [ ] Parse `engine`, `language`, `language_hint`, and `timestamps` from query params.
-- [ ] Forward options into `ShortAudioRequest`.
-- [ ] Document query options in OpenAPI and README.
-- [ ] Run targeted API/docs tests.
-- [ ] Commit as `Accept short transcription request options`.
+- [x] Add failing test proving `?language=ru&timestamps=true&engine=parakeet` is forwarded into `ShortAudioRequest`.
+- [x] Add failing test proving an unsupported `engine` query value returns structured `400 unsupported_engine`.
+- [x] Parse `engine`, `language`, `language_hint`, and `timestamps` from query params.
+- [x] Forward options into `ShortAudioRequest`.
+- [x] Document query options in OpenAPI and README.
+- [x] Run targeted API/docs tests.
+- [x] Commit as `Accept short transcription request options`.
 
 ### Task 5: Zero-Copy HTTP Decode Source
 
@@ -84,13 +84,13 @@
 - Test: `crates/aximo-audio/src/decode.rs`
 - Test: `crates/aximo-audio/src/normalize.rs`
 
-- [ ] Add `bytes` as a direct workspace dependency.
-- [ ] Add `decode_container_bytes_with_sample_limit(Bytes, ...)`.
-- [ ] Add `prepare_short_audio_bytes_with_limits(Bytes, ...)` so axum `Bytes` can be passed without `to_vec()` for container decode.
-- [ ] Keep existing `&[u8]` APIs for crate consumers.
-- [ ] Route HTTP short-audio through the Bytes-aware API.
-- [ ] Run audio and short transcription tests.
-- [ ] Commit as `Avoid extra input copy during audio decode`.
+- [x] Add `bytes` as a direct workspace dependency.
+- [x] Add `decode_container_bytes_with_sample_limit(Bytes, ...)`.
+- [x] Add `prepare_short_audio_bytes_with_limits(Bytes, ...)` so axum `Bytes` can be passed without `to_vec()` for container decode.
+- [x] Keep existing `&[u8]` APIs for crate consumers.
+- [x] Route HTTP short-audio through the Bytes-aware API.
+- [x] Run audio and short transcription tests.
+- [x] Commit as `Decode short audio from shared bytes`.
 
 ### Task 6: Documentation And Future Work
 
@@ -100,9 +100,9 @@
 - Modify: `docs/realtime-protocol.md`
 - Modify: `docs/superpowers/plans/2026-04-24-production-runtime-polish.md`
 
-- [ ] Document per-component readiness semantics.
-- [ ] Document histogram metrics and request options.
-- [ ] Keep benchmark suite, higher-quality resampling, timestamps/language backend metadata, audit/deny/SBOM, and streaming decoder as explicit future work.
-- [ ] Mark plan tasks complete.
-- [ ] Run docs/API tests.
-- [ ] Commit as `Document production runtime polish`.
+- [x] Document per-component readiness semantics.
+- [x] Document histogram metrics and request options.
+- [x] Keep benchmark suite, higher-quality resampling, timestamps/language backend metadata, audit/deny/SBOM, and streaming decoder as explicit future work.
+- [x] Mark plan tasks complete.
+- [x] Run docs/API tests.
+- [x] Commit as `Document production runtime polish`.
