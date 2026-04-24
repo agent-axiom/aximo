@@ -1,3 +1,7 @@
+use axum::{
+    body::{to_bytes, Body},
+    http::Request,
+};
 use futures_util::{SinkExt, StreamExt};
 use serde_json::Value;
 use std::sync::{
@@ -10,6 +14,7 @@ use tokio::{
     time::{sleep, timeout, Duration},
 };
 use tokio_tungstenite::{connect_async, tungstenite::Message};
+use tower::ServiceExt;
 
 struct RecordingEngine {
     requests: Arc<Mutex<Vec<usize>>>,
@@ -376,6 +381,69 @@ async fn websocket_session_returns_error_when_capacity_is_exhausted() {
     assert_eq!(
         second_event["reason"],
         "realtime session capacity exhausted"
+    );
+
+    server.abort();
+}
+
+#[tokio::test]
+async fn websocket_queue_overflow_is_observable_from_realtime_connection() {
+    let mut settings = aximo::config::Settings::default();
+    settings.limits.realtime_event_channel_capacity = 1;
+    let app = aximo::app::build_app(
+        settings,
+        Arc::new(aximo_inference::engine::FakeEngine),
+        Arc::new(aximo_inference::engine::FakeEngine),
+    );
+    let (url, server) = spawn_server_with_app(app.clone()).await;
+    let (mut socket, _) = connect_async(url).await.unwrap();
+
+    socket
+        .send(Message::Text(r#"{"event":"start"}"#.into()))
+        .await
+        .unwrap();
+    for _ in 0..256 {
+        if socket
+            .send(Message::Text(r#"{"event":"start"}"#.into()))
+            .await
+            .is_err()
+        {
+            break;
+        }
+    }
+
+    let mut saw_overflow = false;
+    let read_events = async {
+        while let Some(message) = socket.next().await {
+            let Ok(Message::Text(text)) = message else {
+                break;
+            };
+            let event: Value = serde_json::from_str(&text).unwrap();
+            if event["code"] == "websocket_queue_overflow" {
+                saw_overflow = true;
+                break;
+            }
+        }
+    };
+    let _ = timeout(Duration::from_secs(2), read_events).await;
+
+    let metrics_response = app
+        .oneshot(
+            Request::builder()
+                .uri("/metrics")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = to_bytes(metrics_response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let metrics = String::from_utf8(body.to_vec()).unwrap();
+
+    assert!(
+        saw_overflow || metrics.contains("aximo_ws_queue_overflows_total 1"),
+        "expected websocket queue overflow event or metric, metrics:\n{metrics}",
     );
 
     server.abort();

@@ -4,7 +4,10 @@ use axum::{
 };
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::{mpsc, Mutex};
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    mpsc, Mutex,
+};
 use std::time::Duration;
 use tokio::sync::oneshot;
 
@@ -46,6 +49,59 @@ impl aximo_inference::engine::SpeechEngine for BlockingEngine {
         }
 
         Ok(aximo_core::ShortAudioResult::new("done", "blocking"))
+    }
+}
+
+struct CountingBlockingEngine {
+    call_count: Arc<AtomicUsize>,
+    first_started_tx: Mutex<Option<oneshot::Sender<()>>>,
+    release_first_rx: Mutex<Option<mpsc::Receiver<()>>>,
+}
+
+impl CountingBlockingEngine {
+    fn new() -> (
+        Self,
+        Arc<AtomicUsize>,
+        oneshot::Receiver<()>,
+        mpsc::Sender<()>,
+    ) {
+        let call_count = Arc::new(AtomicUsize::new(0));
+        let (first_started_tx, first_started_rx) = oneshot::channel();
+        let (release_first_tx, release_first_rx) = mpsc::channel();
+
+        (
+            Self {
+                call_count: Arc::clone(&call_count),
+                first_started_tx: Mutex::new(Some(first_started_tx)),
+                release_first_rx: Mutex::new(Some(release_first_rx)),
+            },
+            call_count,
+            first_started_rx,
+            release_first_tx,
+        )
+    }
+}
+
+impl aximo_inference::engine::SpeechEngine for CountingBlockingEngine {
+    fn transcribe_short(
+        &self,
+        _request: aximo_core::ShortAudioRequest,
+    ) -> Result<aximo_core::ShortAudioResult, aximo_inference::engine::InferenceError> {
+        let call_index = self.call_count.fetch_add(1, Ordering::SeqCst);
+        if call_index == 0 {
+            if let Some(tx) = self.first_started_tx.lock().unwrap().take() {
+                let _ = tx.send(());
+            }
+
+            if let Some(rx) = self.release_first_rx.lock().unwrap().take() {
+                let _ = rx.recv();
+            }
+        }
+
+        Ok(aximo_core::ShortAudioResult::new(
+            "gate released",
+            "counting-blocking",
+        ))
     }
 }
 
@@ -367,6 +423,51 @@ async fn transcription_endpoint_returns_gateway_timeout_when_inference_exceeds_b
     let json: Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(json["code"], "inference_timeout");
     assert_eq!(json["message"], "short-audio inference timed out");
+}
+
+#[tokio::test]
+async fn timed_out_short_request_keeps_model_gate_until_backend_returns() {
+    let mut settings = aximo::config::Settings::default();
+    settings.limits.short_inference_timeout_ms = 50;
+    settings.limits.max_short_inferences = 2;
+    let (engine, call_count, first_started_rx, release_first_tx) = CountingBlockingEngine::new();
+    let app = aximo::app::build_app(
+        settings,
+        Arc::new(engine),
+        Arc::new(aximo_inference::engine::FakeEngine),
+    );
+
+    let first_request = Request::builder()
+        .method("POST")
+        .uri("/v1/transcriptions")
+        .header("content-type", "audio/wav")
+        .body(Body::from(fixture_bytes("tone-16k-mono.wav")))
+        .unwrap();
+    let second_request = Request::builder()
+        .method("POST")
+        .uri("/v1/transcriptions")
+        .header("content-type", "audio/wav")
+        .body(Body::from(fixture_bytes("tone-16k-mono.wav")))
+        .unwrap();
+
+    let first_app = app.clone();
+    let first = tokio::spawn(async move { first_app.oneshot(first_request).await.unwrap() });
+    first_started_rx.await.unwrap();
+
+    let first_response = first.await.unwrap();
+    assert_eq!(first_response.status(), StatusCode::GATEWAY_TIMEOUT);
+    assert_eq!(call_count.load(Ordering::SeqCst), 1);
+
+    let second_app = app.clone();
+    let second = tokio::spawn(async move { second_app.oneshot(second_request).await.unwrap() });
+    tokio::time::sleep(Duration::from_millis(10)).await;
+
+    assert_eq!(call_count.load(Ordering::SeqCst), 1);
+
+    release_first_tx.send(()).unwrap();
+    let second_response = second.await.unwrap();
+    assert_eq!(second_response.status(), StatusCode::OK);
+    assert_eq!(call_count.load(Ordering::SeqCst), 2);
 }
 
 #[tokio::test]

@@ -239,7 +239,10 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
     cleanup_active_session(&state, &mut active_session_id);
     drop(event_tx);
     tokio::select! {
-        _ = &mut writer => {}
+        result = &mut writer => {
+            let _ = result;
+            return;
+        }
         _ = tokio::time::sleep(WRITER_DRAIN_TIMEOUT) => writer.abort(),
     }
     let _ = writer.await;
