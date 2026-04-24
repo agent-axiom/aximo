@@ -598,6 +598,54 @@ async fn websocket_partial_emits_structured_error_when_engine_fails() {
 }
 
 #[tokio::test]
+async fn websocket_start_fails_fast_when_realtime_engine_is_degraded() {
+    let mut settings = aximo::config::Settings::default();
+    settings.limits.runtime_degrade_after_consecutive_failures = 1;
+    settings.limits.runtime_degraded_policy =
+        aximo::config::RuntimeDegradedPolicy::FailFastInference;
+    let app = aximo::app::build_app(
+        settings,
+        Arc::new(aximo_inference::engine::FakeEngine),
+        Arc::new(aximo_inference::engine::UnavailableEngine::new(
+            "missing model",
+        )),
+    );
+    let (url, server) = spawn_server_with_app(app).await;
+    let (mut first_socket, _) = connect_async(url.clone()).await.unwrap();
+
+    first_socket
+        .send(Message::Text(r#"{"event":"start"}"#.into()))
+        .await
+        .unwrap();
+    assert_eq!(
+        next_event(&mut first_socket).await["event"],
+        "session_started"
+    );
+    first_socket
+        .send(Message::Text(r#"{"event":"stop"}"#.into()))
+        .await
+        .unwrap();
+    let first_error = next_event(&mut first_socket).await;
+    assert_eq!(first_error["event"], "error");
+    assert_eq!(first_error["code"], "inference_failed");
+
+    let (mut second_socket, _) = connect_async(url).await.unwrap();
+    second_socket
+        .send(Message::Text(r#"{"event":"start"}"#.into()))
+        .await
+        .unwrap();
+    let second_error = next_event(&mut second_socket).await;
+    assert_eq!(second_error["event"], "error");
+    assert_eq!(second_error["code"], "engine_degraded");
+    assert_eq!(
+        second_error["reason"],
+        "speech engine degraded: realtime engine parakeet is degraded"
+    );
+
+    server.abort();
+}
+
+#[tokio::test]
 async fn websocket_partial_is_debounced_by_interval() {
     let mut settings = aximo::config::Settings::default();
     settings.limits.realtime_partial_min_interval_ms = 10_000;

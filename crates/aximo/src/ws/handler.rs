@@ -83,6 +83,11 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                             continue;
                         }
 
+                        if let Some(reason) = realtime_engine_degraded_reason(&state) {
+                            queue_or_break!(ServerEvent::error("engine_degraded", reason),);
+                            continue;
+                        }
+
                         match state.scheduler.try_acquire_realtime_session() {
                             Ok(permit) => {
                                 let session_id = state
@@ -422,6 +427,23 @@ fn record_inference_health(
             InferenceError::InvalidAudio(_) | InferenceError::UnsupportedEngine(_),
         ) => {}
     }
+}
+
+fn realtime_engine_degraded_reason(state: &AppState) -> Option<String> {
+    if !state.runtime_degraded_policy.fail_fast_inference() {
+        return None;
+    }
+
+    let partial_component = format!("realtime_partial:{}", state.realtime_engine_name);
+    let final_component = format!("realtime_final:{}", state.realtime_engine_name);
+    (!state.runtime_health.is_component_ready(&partial_component)
+        || !state.runtime_health.is_component_ready(&final_component))
+    .then(|| {
+        format!(
+            "speech engine degraded: realtime engine {} is degraded",
+            state.realtime_engine_name
+        )
+    })
 }
 
 fn cleanup_active_session(state: &AppState, active_session_id: &mut Option<String>) {

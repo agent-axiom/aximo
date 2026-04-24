@@ -105,6 +105,7 @@ AXIMO_SHORT_INFERENCE_TIMEOUT_MS=120000
 AXIMO_REALTIME_PARTIAL_TIMEOUT_MS=5000
 AXIMO_REALTIME_FINAL_TIMEOUT_MS=120000
 AXIMO_RUNTIME_DEGRADE_AFTER_CONSECUTIVE_FAILURES=3
+AXIMO_RUNTIME_DEGRADED_POLICY=readiness_only
 ```
 
 ## Short Audio Example
@@ -261,7 +262,7 @@ If container logs include `onnxruntime cpuid_info warning: Unknown CPU vendor`, 
 
 Latency and RTF metrics are emitted as Prometheus histograms, so dashboards can use `histogram_quantile()` for p95/p99 without depending only on averages.
 
-`/health/live` is process liveness. `/health/ready` reports aggregate readiness and per-component details such as `short:parakeet`, `realtime_partial:parakeet`, and `realtime_final:parakeet`. It returns `503` with a JSON `degraded` status after consecutive timeout/runtime/unavailable inference failures for any component reach `runtime_degrade_after_consecutive_failures`. A successful inference clears only its own component state.
+`/health/live` is process liveness. `/health/ready` reports aggregate readiness and per-component details such as `short:parakeet`, `realtime_partial:parakeet`, and `realtime_final:parakeet`. It returns `503` with a JSON `degraded` status after consecutive timeout/runtime/unavailable inference failures for any component reach `runtime_degrade_after_consecutive_failures`. A successful inference clears only its own component state. `runtime_degraded_policy = "readiness_only"` only signals orchestrators through readiness; `runtime_degraded_policy = "fail_fast_inference"` additionally rejects new inference work for degraded components with `engine_degraded`.
 
 On SIGINT or SIGTERM, Aximo stops accepting new connections through axum graceful shutdown and waits up to `shutdown_grace_period_ms`.
 

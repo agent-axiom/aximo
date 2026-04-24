@@ -138,6 +138,34 @@ struct StaticErrorEngine {
     error: aximo_inference::engine::InferenceError,
 }
 
+struct CountingRuntimeErrorEngine {
+    call_count: Arc<AtomicUsize>,
+}
+
+impl CountingRuntimeErrorEngine {
+    fn new() -> (Self, Arc<AtomicUsize>) {
+        let call_count = Arc::new(AtomicUsize::new(0));
+        (
+            Self {
+                call_count: Arc::clone(&call_count),
+            },
+            call_count,
+        )
+    }
+}
+
+impl aximo_inference::engine::SpeechEngine for CountingRuntimeErrorEngine {
+    fn transcribe_short(
+        &self,
+        _request: aximo_core::ShortAudioRequest,
+    ) -> Result<aximo_core::ShortAudioResult, aximo_inference::engine::InferenceError> {
+        self.call_count.fetch_add(1, Ordering::SeqCst);
+        Err(aximo_inference::engine::InferenceError::Runtime(
+            "model is stuck".to_string(),
+        ))
+    }
+}
+
 impl StaticErrorEngine {
     fn new(error: aximo_inference::engine::InferenceError) -> Self {
         Self { error }
@@ -829,5 +857,58 @@ async fn transcription_endpoint_returns_internal_error_for_runtime_failure() {
     assert_eq!(
         json["message"],
         "runtime inference error: blocking inference task failed"
+    );
+}
+
+#[tokio::test]
+async fn transcription_endpoint_fail_fast_when_short_engine_is_degraded() {
+    let mut settings = aximo::config::Settings::default();
+    settings.limits.runtime_degrade_after_consecutive_failures = 1;
+    settings.limits.runtime_degraded_policy =
+        aximo::config::RuntimeDegradedPolicy::FailFastInference;
+    let (engine, call_count) = CountingRuntimeErrorEngine::new();
+    let app = aximo::app::build_app(
+        settings,
+        Arc::new(engine),
+        Arc::new(aximo_inference::engine::FakeEngine),
+    );
+
+    let first_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/transcriptions")
+                .header("content-type", "audio/wav")
+                .body(Body::from(fixture_bytes("tone-16k-mono.wav")))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(first_response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(call_count.load(Ordering::SeqCst), 1);
+
+    let second_response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/transcriptions")
+                .header("content-type", "audio/wav")
+                .body(Body::from(fixture_bytes("tone-16k-mono.wav")))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(second_response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(call_count.load(Ordering::SeqCst), 1);
+    let body = to_bytes(second_response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["code"], "engine_degraded");
+    assert_eq!(
+        json["message"],
+        "speech engine degraded: short:parakeet is degraded"
     );
 }

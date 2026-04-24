@@ -6,8 +6,12 @@ use aximo_inference::engine::{FakeEngine, SpeechEngine};
 use axum::{extract::DefaultBodyLimit, Router};
 
 use crate::{
-    config::Settings, engine_runtime::EngineRuntime, http, metrics::Metrics,
-    runtime_health::RuntimeHealth, ws,
+    config::{RuntimeDegradedPolicy, Settings},
+    engine_runtime::EngineRuntime,
+    http,
+    metrics::Metrics,
+    runtime_health::RuntimeHealth,
+    ws,
 };
 
 #[derive(Clone)]
@@ -27,6 +31,7 @@ pub struct AppState {
     pub realtime_final_timeout: std::time::Duration,
     pub metrics: Metrics,
     pub runtime_health: RuntimeHealth,
+    pub runtime_degraded_policy: RuntimeDegradedPolicy,
 }
 
 pub fn build_app(
@@ -86,6 +91,7 @@ pub fn build_app(
         runtime_health: RuntimeHealth::new(
             settings.limits.runtime_degrade_after_consecutive_failures,
         ),
+        runtime_degraded_policy: settings.limits.runtime_degraded_policy,
     };
 
     Router::new()

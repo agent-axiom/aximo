@@ -66,10 +66,23 @@ pub async fn transcribe_short(
         .map(|Query(options)| options)
         .map_err(map_query_rejection)
         .inspect_err(|error| record_http_error(&state, error))?;
+    let health_component = format!("short:{}", state.offline_engine_name);
     let body = body
         .map_err(map_body_rejection)
         .inspect_err(|error| record_http_error(&state, error))?;
     state.metrics.record_audio_body_bytes(body.len());
+
+    if state.runtime_degraded_policy.fail_fast_inference()
+        && !state.runtime_health.is_component_ready(&health_component)
+    {
+        let error = HttpError::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "engine_degraded",
+            format!("speech engine degraded: {health_component} is degraded"),
+        );
+        record_http_error(&state, &error);
+        return Err(error);
+    }
 
     let _request_permit = state
         .scheduler
@@ -160,7 +173,6 @@ pub async fn transcribe_short(
         audio_duration_ms,
     );
 
-    let health_component = format!("short:{}", state.offline_engine_name);
     match result {
         Ok(result) => {
             state.runtime_health.record_success(health_component);

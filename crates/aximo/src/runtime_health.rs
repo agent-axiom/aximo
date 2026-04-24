@@ -87,6 +87,15 @@ impl RuntimeHealth {
         self.readiness().status == "ready"
     }
 
+    pub fn is_component_ready(&self, component: &str) -> bool {
+        let state = self.inner.lock().expect("runtime health lock");
+        state
+            .components
+            .get(component)
+            .map(|state| self.component_readiness(component, state).status == "ready")
+            .unwrap_or(true)
+    }
+
     fn component_readiness(&self, component: &str, state: &ComponentState) -> ComponentReadiness {
         let degraded = self.degrade_after_consecutive_failures > 0
             && state.consecutive_failures >= self.degrade_after_consecutive_failures;

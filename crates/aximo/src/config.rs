@@ -99,6 +99,9 @@ impl Settings {
         if let Some(value) = env_parse("AXIMO_RUNTIME_DEGRADE_AFTER_CONSECUTIVE_FAILURES")? {
             self.limits.runtime_degrade_after_consecutive_failures = value;
         }
+        if let Some(value) = env_parse("AXIMO_RUNTIME_DEGRADED_POLICY")? {
+            self.limits.runtime_degraded_policy = value;
+        }
 
         Ok(())
     }
@@ -165,6 +168,7 @@ pub struct LimitSettings {
     pub realtime_partial_timeout_ms: u64,
     pub realtime_final_timeout_ms: u64,
     pub runtime_degrade_after_consecutive_failures: u64,
+    pub runtime_degraded_policy: RuntimeDegradedPolicy,
 }
 
 impl Default for LimitSettings {
@@ -187,6 +191,40 @@ impl Default for LimitSettings {
             realtime_partial_timeout_ms: 5_000,
             realtime_final_timeout_ms: 120_000,
             runtime_degrade_after_consecutive_failures: 3,
+            runtime_degraded_policy: RuntimeDegradedPolicy::ReadinessOnly,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeDegradedPolicy {
+    ReadinessOnly,
+    FailFastInference,
+}
+
+impl RuntimeDegradedPolicy {
+    pub const fn fail_fast_inference(self) -> bool {
+        matches!(self, Self::FailFastInference)
+    }
+}
+
+impl Default for RuntimeDegradedPolicy {
+    fn default() -> Self {
+        Self::ReadinessOnly
+    }
+}
+
+impl FromStr for RuntimeDegradedPolicy {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "readiness_only" => Ok(Self::ReadinessOnly),
+            "fail_fast_inference" => Ok(Self::FailFastInference),
+            other => Err(format!(
+                "expected readiness_only or fail_fast_inference, got {other:?}"
+            )),
         }
     }
 }
@@ -264,6 +302,7 @@ mod tests {
         "AXIMO_REALTIME_PARTIAL_TIMEOUT_MS",
         "AXIMO_REALTIME_FINAL_TIMEOUT_MS",
         "AXIMO_RUNTIME_DEGRADE_AFTER_CONSECUTIVE_FAILURES",
+        "AXIMO_RUNTIME_DEGRADED_POLICY",
     ];
 
     fn env_lock() -> &'static Mutex<()> {
@@ -376,6 +415,7 @@ short_inference_timeout_ms = 1000
 realtime_partial_timeout_ms = 2000
 realtime_final_timeout_ms = 3000
 runtime_degrade_after_consecutive_failures = 4
+runtime_degraded_policy = "readiness_only"
 "#,
         )
         .unwrap();
@@ -404,6 +444,7 @@ runtime_degrade_after_consecutive_failures = 4
         std::env::set_var("AXIMO_REALTIME_PARTIAL_TIMEOUT_MS", "5000");
         std::env::set_var("AXIMO_REALTIME_FINAL_TIMEOUT_MS", "6000");
         std::env::set_var("AXIMO_RUNTIME_DEGRADE_AFTER_CONSECUTIVE_FAILURES", "7");
+        std::env::set_var("AXIMO_RUNTIME_DEGRADED_POLICY", "fail_fast_inference");
 
         let settings = Settings::load().unwrap();
 
@@ -432,6 +473,10 @@ runtime_degrade_after_consecutive_failures = 4
         assert_eq!(
             settings.limits.runtime_degrade_after_consecutive_failures,
             7
+        );
+        assert_eq!(
+            settings.limits.runtime_degraded_policy,
+            RuntimeDegradedPolicy::FailFastInference
         );
 
         clear_overlay_env();
