@@ -16,6 +16,7 @@ fn settings_can_be_loaded_from_toml_file() {
 [server]
 host = "127.0.0.1"
 port = 9090
+shutdown_grace_period_ms = 1500
 
 [inference]
 models_dir = "/srv/models"
@@ -56,6 +57,7 @@ runtime_degrade_after_consecutive_failures = 6
 
     assert_eq!(settings.server.host, "127.0.0.1");
     assert_eq!(settings.server.port, 9090);
+    assert_eq!(settings.server.shutdown_grace_period_ms, 1500);
     assert_eq!(settings.inference.models_dir, "/srv/models");
     assert_eq!(settings.limits.max_short_audio_bytes, 12000000);
     assert_eq!(settings.limits.max_short_raw_pcm_bytes, 960000);
@@ -163,4 +165,27 @@ max_realtime_sessions = 2
         settings.limits.runtime_degrade_after_consecutive_failures,
         3
     );
+}
+
+#[tokio::test]
+async fn runtime_server_exits_after_shutdown_signal() {
+    let app = aximo::app::build_test_app().await;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+
+    let server = tokio::spawn(aximo::runtime::serve_with_shutdown(
+        listener,
+        app,
+        async move {
+            let _ = shutdown_rx.await;
+        },
+        std::time::Duration::from_millis(500),
+    ));
+
+    shutdown_tx.send(()).unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(2), server)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
 }

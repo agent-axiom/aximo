@@ -36,6 +36,9 @@ impl Settings {
         if let Some(value) = env_parse("AXIMO_SERVER_PORT")? {
             self.server.port = value;
         }
+        if let Some(value) = env_parse("AXIMO_SHUTDOWN_GRACE_PERIOD_MS")? {
+            self.server.shutdown_grace_period_ms = value;
+        }
         if let Some(value) = env_string("AXIMO_MODELS_DIR")? {
             self.inference.models_dir = value;
         }
@@ -129,6 +132,7 @@ where
 pub struct ServerSettings {
     pub host: String,
     pub port: u16,
+    pub shutdown_grace_period_ms: u64,
 }
 
 impl Default for ServerSettings {
@@ -136,6 +140,7 @@ impl Default for ServerSettings {
         Self {
             host: "0.0.0.0".to_string(),
             port: 8080,
+            shutdown_grace_period_ms: 30_000,
         }
     }
 }
@@ -238,6 +243,7 @@ mod tests {
         "AXIMO_CONFIG",
         "AXIMO_SERVER_HOST",
         "AXIMO_SERVER_PORT",
+        "AXIMO_SHUTDOWN_GRACE_PERIOD_MS",
         "AXIMO_MODELS_DIR",
         "AXIMO_DEFAULT_OFFLINE_ENGINE",
         "AXIMO_DEFAULT_REALTIME_ENGINE",
@@ -293,6 +299,7 @@ mod tests {
 [server]
 host = "127.0.0.1"
 port = 8081
+shutdown_grace_period_ms = 1000
 
 [inference]
 models_dir = "/tmp/models"
@@ -318,6 +325,7 @@ max_realtime_sessions = 1
         let settings = Settings::load().unwrap();
 
         assert_eq!(settings.server.port, 8081);
+        assert_eq!(settings.server.shutdown_grace_period_ms, 1000);
         assert_eq!(settings.inference.models_dir, "/tmp/models");
 
         clear_overlay_env();
@@ -335,6 +343,7 @@ max_realtime_sessions = 1
 [server]
 host = "127.0.0.1"
 port = 8081
+shutdown_grace_period_ms = 1000
 
 [inference]
 models_dir = "/tmp/models"
@@ -374,6 +383,7 @@ runtime_degrade_after_consecutive_failures = 4
         std::env::set_var("AXIMO_CONFIG", &path);
         std::env::set_var("AXIMO_SERVER_HOST", "0.0.0.0");
         std::env::set_var("AXIMO_SERVER_PORT", "9090");
+        std::env::set_var("AXIMO_SHUTDOWN_GRACE_PERIOD_MS", "2500");
         std::env::set_var("AXIMO_MODELS_DIR", "/mnt/models");
         std::env::set_var("AXIMO_DEFAULT_OFFLINE_ENGINE", "gigaam");
         std::env::set_var("AXIMO_DEFAULT_REALTIME_ENGINE", "parakeet");
@@ -399,6 +409,7 @@ runtime_degrade_after_consecutive_failures = 4
 
         assert_eq!(settings.server.host, "0.0.0.0");
         assert_eq!(settings.server.port, 9090);
+        assert_eq!(settings.server.shutdown_grace_period_ms, 2500);
         assert_eq!(settings.inference.models_dir, "/mnt/models");
         assert_eq!(settings.inference.default_offline_engine, "gigaam");
         assert_eq!(settings.inference.default_realtime_engine, "parakeet");

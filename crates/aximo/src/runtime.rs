@@ -1,10 +1,16 @@
-use std::sync::Arc;
+use std::{
+    future::{Future, IntoFuture},
+    sync::Arc,
+    time::Duration,
+};
 
 use aximo_inference::{
     engine::{InferenceError, SpeechEngine},
     runtime::{EngineKind, EngineSpec, RuntimeEngineFactory},
 };
+use axum::Router;
 use thiserror::Error;
+use tokio::sync::oneshot;
 
 use crate::config::Settings;
 
@@ -73,10 +79,81 @@ pub async fn run_service() -> anyhow::Result<()> {
     let (offline_engine, realtime_engine) = load_default_engines(&settings)?;
     let bind_address = format!("{}:{}", settings.server.host, settings.server.port);
     let listener = tokio::net::TcpListener::bind(&bind_address).await?;
+    let shutdown_grace_period = Duration::from_millis(settings.server.shutdown_grace_period_ms);
     let app = crate::app::build_app(settings, offline_engine, realtime_engine);
 
-    axum::serve(listener, app).await?;
+    serve_with_shutdown(listener, app, shutdown_signal(), shutdown_grace_period).await?;
     Ok(())
+}
+
+pub async fn serve_with_shutdown<F>(
+    listener: tokio::net::TcpListener,
+    app: Router,
+    shutdown: F,
+    shutdown_grace_period: Duration,
+) -> anyhow::Result<()>
+where
+    F: Future<Output = ()> + Send + 'static,
+{
+    let (server_shutdown_tx, server_shutdown_rx) = oneshot::channel::<()>();
+    let (grace_started_tx, grace_started_rx) = oneshot::channel::<()>();
+
+    tokio::spawn(async move {
+        shutdown.await;
+        let _ = grace_started_tx.send(());
+        let _ = server_shutdown_tx.send(());
+    });
+
+    let server = axum::serve(listener, app)
+        .with_graceful_shutdown(async move {
+            let _ = server_shutdown_rx.await;
+        })
+        .into_future();
+    tokio::pin!(server);
+
+    let grace_deadline = async move {
+        let _ = grace_started_rx.await;
+        tokio::time::sleep(shutdown_grace_period).await;
+    };
+
+    tokio::select! {
+        result = &mut server => {
+            result?;
+            Ok(())
+        }
+        _ = grace_deadline => {
+            Err(anyhow::anyhow!(
+                "graceful shutdown exceeded {}ms",
+                shutdown_grace_period.as_millis()
+            ))
+        }
+    }
+}
+
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        tokio::signal::ctrl_c()
+            .await
+            .expect("install Ctrl-C shutdown handler");
+    };
+
+    #[cfg(unix)]
+    {
+        let terminate = async {
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+                .expect("install SIGTERM shutdown handler")
+                .recv()
+                .await;
+        };
+
+        tokio::select! {
+            _ = ctrl_c => {}
+            _ = terminate => {}
+        }
+    }
+
+    #[cfg(not(unix))]
+    ctrl_c.await;
 }
 
 #[cfg(test)]
