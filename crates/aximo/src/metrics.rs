@@ -13,6 +13,12 @@ use axum::{
 
 use crate::app::AppState;
 
+const LATENCY_BUCKETS: &[f64] = &[
+    0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0, 120.0,
+];
+const AUDIO_DURATION_BUCKETS: &[f64] = &[1.0, 5.0, 10.0, 30.0, 60.0, 120.0, 300.0, 600.0];
+const RTF_BUCKETS: &[f64] = &[0.1, 0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0];
+
 #[derive(Clone, Default)]
 pub struct Metrics {
     inner: Arc<Mutex<MetricsState>>,
@@ -25,16 +31,22 @@ struct MetricsState {
     audio_body_bytes_total: u64,
     audio_decode_seconds_sum: f64,
     audio_decode_seconds_count: u64,
+    audio_decode_seconds_buckets: Vec<u64>,
     audio_duration_seconds_sum: f64,
     audio_duration_seconds_count: u64,
+    audio_duration_seconds_buckets: Vec<u64>,
     inference_wait_seconds_sum: BTreeMap<&'static str, f64>,
     inference_wait_seconds_count: BTreeMap<&'static str, u64>,
+    inference_wait_seconds_buckets: BTreeMap<&'static str, Vec<u64>>,
     model_execution_wait_seconds_sum: BTreeMap<&'static str, f64>,
     model_execution_wait_seconds_count: BTreeMap<&'static str, u64>,
+    model_execution_wait_seconds_buckets: BTreeMap<&'static str, Vec<u64>>,
     inference_seconds_sum: BTreeMap<&'static str, f64>,
     inference_seconds_count: BTreeMap<&'static str, u64>,
+    inference_seconds_buckets: BTreeMap<&'static str, Vec<u64>>,
     rtf_sum: BTreeMap<&'static str, f64>,
     rtf_count: BTreeMap<&'static str, u64>,
+    rtf_buckets: BTreeMap<&'static str, Vec<u64>>,
     inference_timeouts_total: BTreeMap<&'static str, u64>,
     blocking_tasks_active: i64,
     model_executions_active: i64,
@@ -67,10 +79,21 @@ impl Metrics {
         let mut state = self.inner.lock().expect("metrics lock");
         state.audio_decode_seconds_sum += elapsed.as_secs_f64();
         state.audio_decode_seconds_count = state.audio_decode_seconds_count.saturating_add(1);
+        observe_bucket(
+            &mut state.audio_decode_seconds_buckets,
+            LATENCY_BUCKETS,
+            elapsed.as_secs_f64(),
+        );
         if let Some(duration_ms) = duration_ms {
-            state.audio_duration_seconds_sum += duration_ms as f64 / 1000.0;
+            let duration_seconds = duration_ms as f64 / 1000.0;
+            state.audio_duration_seconds_sum += duration_seconds;
             state.audio_duration_seconds_count =
                 state.audio_duration_seconds_count.saturating_add(1);
+            observe_bucket(
+                &mut state.audio_duration_seconds_buckets,
+                AUDIO_DURATION_BUCKETS,
+                duration_seconds,
+            );
         }
     }
 
@@ -86,11 +109,26 @@ impl Metrics {
         *state.inference_wait_seconds_count.entry(kind).or_default() += 1;
         *state.inference_seconds_sum.entry(kind).or_default() += elapsed.as_secs_f64();
         *state.inference_seconds_count.entry(kind).or_default() += 1;
+        observe_bucket(
+            state
+                .inference_wait_seconds_buckets
+                .entry(kind)
+                .or_default(),
+            LATENCY_BUCKETS,
+            wait.as_secs_f64(),
+        );
+        observe_bucket(
+            state.inference_seconds_buckets.entry(kind).or_default(),
+            LATENCY_BUCKETS,
+            elapsed.as_secs_f64(),
+        );
 
         if audio_duration_ms > 0 {
             let audio_seconds = audio_duration_ms as f64 / 1000.0;
-            *state.rtf_sum.entry(kind).or_default() += elapsed.as_secs_f64() / audio_seconds;
+            let rtf = elapsed.as_secs_f64() / audio_seconds;
+            *state.rtf_sum.entry(kind).or_default() += rtf;
             *state.rtf_count.entry(kind).or_default() += 1;
+            observe_bucket(state.rtf_buckets.entry(kind).or_default(), RTF_BUCKETS, rtf);
         }
     }
 
@@ -104,6 +142,14 @@ impl Metrics {
             .model_execution_wait_seconds_count
             .entry(kind)
             .or_default() += 1;
+        observe_bucket(
+            state
+                .model_execution_wait_seconds_buckets
+                .entry(kind)
+                .or_default(),
+            LATENCY_BUCKETS,
+            elapsed.as_secs_f64(),
+        );
     }
 
     pub fn record_inference_timeout(&self, kind: &'static str) {
@@ -205,119 +251,60 @@ impl Metrics {
             state.audio_body_bytes_total
         )
         .expect("write metrics");
-        writeln!(
-            output,
-            "# HELP aximo_audio_decode_seconds Audio decode time in seconds."
-        )
-        .expect("write metrics");
-        writeln!(output, "# TYPE aximo_audio_decode_seconds summary").expect("write metrics");
-        writeln!(
-            output,
-            "aximo_audio_decode_seconds_sum {:.9}",
-            state.audio_decode_seconds_sum
-        )
-        .expect("write metrics");
-        writeln!(
-            output,
-            "aximo_audio_decode_seconds_count {}",
-            state.audio_decode_seconds_count
-        )
-        .expect("write metrics");
-        writeln!(
-            output,
-            "# HELP aximo_audio_duration_seconds Decoded audio duration in seconds."
-        )
-        .expect("write metrics");
-        writeln!(output, "# TYPE aximo_audio_duration_seconds summary").expect("write metrics");
-        writeln!(
-            output,
-            "aximo_audio_duration_seconds_sum {:.9}",
-            state.audio_duration_seconds_sum
-        )
-        .expect("write metrics");
-        writeln!(
-            output,
-            "aximo_audio_duration_seconds_count {}",
-            state.audio_duration_seconds_count
-        )
-        .expect("write metrics");
-
-        writeln!(
-            output,
-            "# HELP aximo_inference_wait_seconds Admission scheduler wait time in seconds."
-        )
-        .expect("write metrics");
-        writeln!(output, "# TYPE aximo_inference_wait_seconds summary").expect("write metrics");
-        for (kind, value) in &state.inference_wait_seconds_sum {
-            writeln!(
-                output,
-                "aximo_inference_wait_seconds_sum{{kind=\"{kind}\"}} {value:.9}"
-            )
-            .expect("write metrics");
-        }
-        for (kind, value) in &state.inference_wait_seconds_count {
-            writeln!(
-                output,
-                "aximo_inference_wait_seconds_count{{kind=\"{kind}\"}} {value}"
-            )
-            .expect("write metrics");
-        }
-
-        writeln!(
-            output,
-            "# HELP aximo_model_execution_wait_seconds Per-engine execution gate wait time in seconds."
-        )
-        .expect("write metrics");
-        writeln!(output, "# TYPE aximo_model_execution_wait_seconds summary")
-            .expect("write metrics");
-        for (kind, value) in &state.model_execution_wait_seconds_sum {
-            writeln!(
-                output,
-                "aximo_model_execution_wait_seconds_sum{{kind=\"{kind}\"}} {value:.9}"
-            )
-            .expect("write metrics");
-        }
-        for (kind, value) in &state.model_execution_wait_seconds_count {
-            writeln!(
-                output,
-                "aximo_model_execution_wait_seconds_count{{kind=\"{kind}\"}} {value}"
-            )
-            .expect("write metrics");
-        }
-
-        writeln!(
-            output,
-            "# HELP aximo_inference_seconds Client-visible inference time in seconds."
-        )
-        .expect("write metrics");
-        writeln!(output, "# TYPE aximo_inference_seconds summary").expect("write metrics");
-        for (kind, value) in &state.inference_seconds_sum {
-            writeln!(
-                output,
-                "aximo_inference_seconds_sum{{kind=\"{kind}\"}} {value:.9}"
-            )
-            .expect("write metrics");
-        }
-        for (kind, value) in &state.inference_seconds_count {
-            writeln!(
-                output,
-                "aximo_inference_seconds_count{{kind=\"{kind}\"}} {value}"
-            )
-            .expect("write metrics");
-        }
-
-        writeln!(
-            output,
-            "# HELP aximo_rtf Real-time factor measured as inference seconds divided by audio seconds."
-        )
-        .expect("write metrics");
-        writeln!(output, "# TYPE aximo_rtf summary").expect("write metrics");
-        for (kind, value) in &state.rtf_sum {
-            writeln!(output, "aximo_rtf_sum{{kind=\"{kind}\"}} {value:.9}").expect("write metrics");
-        }
-        for (kind, value) in &state.rtf_count {
-            writeln!(output, "aximo_rtf_count{{kind=\"{kind}\"}} {value}").expect("write metrics");
-        }
+        write_histogram(
+            &mut output,
+            "aximo_audio_decode_seconds",
+            "Audio decode time in seconds.",
+            LATENCY_BUCKETS,
+            state.audio_decode_seconds_sum,
+            state.audio_decode_seconds_count,
+            &state.audio_decode_seconds_buckets,
+        );
+        write_histogram(
+            &mut output,
+            "aximo_audio_duration_seconds",
+            "Decoded audio duration in seconds.",
+            AUDIO_DURATION_BUCKETS,
+            state.audio_duration_seconds_sum,
+            state.audio_duration_seconds_count,
+            &state.audio_duration_seconds_buckets,
+        );
+        write_labelled_histogram(
+            &mut output,
+            "aximo_inference_wait_seconds",
+            "Admission scheduler wait time in seconds.",
+            LATENCY_BUCKETS,
+            &state.inference_wait_seconds_sum,
+            &state.inference_wait_seconds_count,
+            &state.inference_wait_seconds_buckets,
+        );
+        write_labelled_histogram(
+            &mut output,
+            "aximo_model_execution_wait_seconds",
+            "Per-engine execution gate wait time in seconds.",
+            LATENCY_BUCKETS,
+            &state.model_execution_wait_seconds_sum,
+            &state.model_execution_wait_seconds_count,
+            &state.model_execution_wait_seconds_buckets,
+        );
+        write_labelled_histogram(
+            &mut output,
+            "aximo_inference_seconds",
+            "Client-visible inference time in seconds.",
+            LATENCY_BUCKETS,
+            &state.inference_seconds_sum,
+            &state.inference_seconds_count,
+            &state.inference_seconds_buckets,
+        );
+        write_labelled_histogram(
+            &mut output,
+            "aximo_rtf",
+            "Real-time factor measured as inference seconds divided by audio seconds.",
+            RTF_BUCKETS,
+            &state.rtf_sum,
+            &state.rtf_count,
+            &state.rtf_buckets,
+        );
 
         writeln!(
             output,
@@ -417,6 +404,88 @@ impl Metrics {
 
         output
     }
+}
+
+fn observe_bucket(bucket_counts: &mut Vec<u64>, boundaries: &[f64], value: f64) {
+    if bucket_counts.len() < boundaries.len() {
+        bucket_counts.resize(boundaries.len(), 0);
+    }
+
+    for (index, boundary) in boundaries.iter().enumerate() {
+        if value <= *boundary {
+            bucket_counts[index] = bucket_counts[index].saturating_add(1);
+        }
+    }
+}
+
+fn write_histogram(
+    output: &mut String,
+    name: &str,
+    help: &str,
+    boundaries: &[f64],
+    sum: f64,
+    count: u64,
+    bucket_counts: &[u64],
+) {
+    writeln!(output, "# HELP {name} {help}").expect("write metrics");
+    writeln!(output, "# TYPE {name} histogram").expect("write metrics");
+    for (index, boundary) in boundaries.iter().enumerate() {
+        writeln!(
+            output,
+            r#"{name}_bucket{{le="{}"}} {}"#,
+            format_bucket(*boundary),
+            bucket_counts.get(index).copied().unwrap_or(0)
+        )
+        .expect("write metrics");
+    }
+    writeln!(output, r#"{name}_bucket{{le="+Inf"}} {count}"#).expect("write metrics");
+    writeln!(output, "{name}_sum {sum:.9}").expect("write metrics");
+    writeln!(output, "{name}_count {count}").expect("write metrics");
+}
+
+fn write_labelled_histogram(
+    output: &mut String,
+    name: &str,
+    help: &str,
+    boundaries: &[f64],
+    sums: &BTreeMap<&'static str, f64>,
+    counts: &BTreeMap<&'static str, u64>,
+    buckets: &BTreeMap<&'static str, Vec<u64>>,
+) {
+    writeln!(output, "# HELP {name} {help}").expect("write metrics");
+    writeln!(output, "# TYPE {name} histogram").expect("write metrics");
+    for (kind, count) in counts {
+        let bucket_counts = buckets.get(kind).map_or(&[][..], Vec::as_slice);
+        for (index, boundary) in boundaries.iter().enumerate() {
+            writeln!(
+                output,
+                r#"{name}_bucket{{kind="{kind}",le="{}"}} {}"#,
+                format_bucket(*boundary),
+                bucket_counts.get(index).copied().unwrap_or(0)
+            )
+            .expect("write metrics");
+        }
+        writeln!(
+            output,
+            r#"{name}_bucket{{kind="{kind}",le="+Inf"}} {count}"#
+        )
+        .expect("write metrics");
+        writeln!(
+            output,
+            r#"{name}_sum{{kind="{kind}"}} {:.9}"#,
+            sums.get(kind).copied().unwrap_or_default()
+        )
+        .expect("write metrics");
+        writeln!(output, r#"{name}_count{{kind="{kind}"}} {count}"#).expect("write metrics");
+    }
+}
+
+fn format_bucket(boundary: f64) -> String {
+    let formatted = boundary.to_string();
+    formatted
+        .strip_suffix(".0")
+        .unwrap_or(&formatted)
+        .to_string()
 }
 
 pub async fn metrics(State(state): State<AppState>) -> Response {
