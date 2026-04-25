@@ -18,6 +18,24 @@ just benchmark-api
 
 By default the script benchmarks the configured Parakeet service with generated 5s, 30s, and 60s WAV tones. Results are written to `target/aximo-benchmarks/results.csv` and summarized in `target/aximo-benchmarks/summary.txt`.
 
+The generated tone path is only a mechanics smoke test for decode overhead, latency, and RTF. To measure recognition quality, point the harness at real speech fixtures and provide `.txt` transcripts with matching basenames:
+
+```text
+bench-fixtures/
+  ru-clean-5s.wav
+  ru-clean-5s.txt
+  en-noisy-30s.mp3
+  en-noisy-30s.txt
+```
+
+Then run:
+
+```bash
+AXIMO_BENCH_FIXTURES_DIR=bench-fixtures AXIMO_BENCH_FORMATS="wav mp3 m4a flac" just benchmark-api
+```
+
+When transcript sidecars are present, `results.csv` and `summary.txt` include WER and CER columns. Use real RU/EN, clean/noisy, short/medium/long samples for production evidence; synthetic tones should not be interpreted as STT quality data.
+
 ## Options
 
 ```bash
@@ -29,6 +47,8 @@ AXIMO_BENCH_RUNS=10
 AXIMO_BENCH_WARMUPS=2
 AXIMO_BENCH_LANGUAGE=ru
 AXIMO_BENCH_TIMESTAMPS=true
+AXIMO_BENCH_FIXTURES_DIR=bench-fixtures
+AXIMO_BENCH_EXPECTED_DIR=bench-transcripts
 just benchmark-api
 ```
 

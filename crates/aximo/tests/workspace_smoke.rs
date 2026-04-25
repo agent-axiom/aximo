@@ -62,6 +62,7 @@ fn workspace_example_config_documents_runtime_degraded_policy() {
     let config = std::fs::read_to_string(root.join("config/aximo.example.toml")).unwrap();
 
     assert!(config.contains("runtime_degraded_policy = \"readiness_only\""));
+    assert!(config.contains("runtime_degraded_recovery_cooldown_ms = 30000"));
 }
 
 #[test]
@@ -76,6 +77,8 @@ fn workspace_exposes_benchmark_suite() {
     assert!(root.join("scripts/benchmark-api.sh").exists());
     assert!(justfile.contains("benchmark-api:"));
     assert!(docs.contains("RTF"));
+    assert!(docs.contains("WER"));
+    assert!(docs.contains("AXIMO_BENCH_FIXTURES_DIR"));
     assert!(docs.contains("Parakeet"));
     assert!(docs.contains("GigaAM"));
 }
@@ -97,6 +100,7 @@ fn workspace_exposes_kubernetes_manifests() {
     assert!(deployment.contains("readinessProbe"));
     assert!(deployment.contains("livenessProbe"));
     assert!(deployment.contains("AXIMO_RUNTIME_DEGRADED_POLICY"));
+    assert!(deployment.contains("AXIMO_RUNTIME_DEGRADED_RECOVERY_COOLDOWN_MS"));
     assert!(docs.contains("kubectl apply -k deploy/kubernetes"));
 }
 
