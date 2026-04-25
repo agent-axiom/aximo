@@ -13,6 +13,11 @@ lint:
 coverage:
     cargo llvm-cov --workspace --summary-only
 
+security:
+    cargo audit --deny warnings
+    cargo deny check
+    cargo cyclonedx --format json
+
 setup-models:
     ./scripts/fetch-models.sh
 

@@ -156,6 +156,32 @@ struct SlowEngine {
     sleep_for: Duration,
 }
 
+struct NativeStreamingEngine {
+    short_calls: Arc<AtomicUsize>,
+    stream_chunks: Arc<Mutex<Vec<usize>>>,
+}
+
+impl NativeStreamingEngine {
+    fn new() -> (Self, Arc<AtomicUsize>, Arc<Mutex<Vec<usize>>>) {
+        let short_calls = Arc::new(AtomicUsize::new(0));
+        let stream_chunks = Arc::new(Mutex::new(Vec::new()));
+
+        (
+            Self {
+                short_calls: Arc::clone(&short_calls),
+                stream_chunks: Arc::clone(&stream_chunks),
+            },
+            short_calls,
+            stream_chunks,
+        )
+    }
+}
+
+struct NativeStreamingSession {
+    stream_chunks: Arc<Mutex<Vec<usize>>>,
+    text: String,
+}
+
 struct RecoveringRealtimeEngine {
     call_count: AtomicUsize,
 }
@@ -194,6 +220,67 @@ impl aximo_inference::engine::SpeechEngine for SlowEngine {
     ) -> Result<aximo_core::ShortAudioResult, aximo_inference::engine::InferenceError> {
         std::thread::sleep(self.sleep_for);
         Ok(aximo_core::ShortAudioResult::new("slow", "slow"))
+    }
+}
+
+impl aximo_inference::engine::StreamingSpeechSession for NativeStreamingSession {
+    fn accept_pcm_chunk(
+        &mut self,
+        chunk: &[u8],
+    ) -> Result<Option<aximo_core::ShortAudioResult>, aximo_inference::engine::InferenceError> {
+        self.stream_chunks.lock().unwrap().push(chunk.len());
+        self.text.push_str("chunk");
+
+        Ok(Some(aximo_core::ShortAudioResult::new(
+            self.text.clone(),
+            "native-test",
+        )))
+    }
+
+    fn finish(
+        &mut self,
+    ) -> Result<aximo_core::ShortAudioResult, aximo_inference::engine::InferenceError> {
+        Ok(aximo_core::ShortAudioResult::new(
+            self.text.clone(),
+            "native-test",
+        ))
+    }
+}
+
+impl aximo_inference::engine::SpeechEngine for NativeStreamingEngine {
+    fn transcribe_short(
+        &self,
+        _request: aximo_core::ShortAudioRequest,
+    ) -> Result<aximo_core::ShortAudioResult, aximo_inference::engine::InferenceError> {
+        self.short_calls.fetch_add(1, Ordering::SeqCst);
+        Ok(aximo_core::ShortAudioResult::new(
+            "offline fallback",
+            "native-test",
+        ))
+    }
+
+    fn capabilities(&self) -> aximo_core::EngineCapabilities {
+        aximo_core::EngineCapabilities {
+            engine: "native-test".to_string(),
+            model_name: "NativeStreamingTest".to_string(),
+            sample_rate_hz: 16_000,
+            languages: vec!["en".to_string()],
+            supports_timestamps: false,
+            supports_language_detection: false,
+            supports_native_streaming: true,
+        }
+    }
+
+    fn start_streaming_session(
+        &self,
+    ) -> Result<
+        Box<dyn aximo_inference::engine::StreamingSpeechSession>,
+        aximo_inference::engine::InferenceError,
+    > {
+        Ok(Box::new(NativeStreamingSession {
+            stream_chunks: Arc::clone(&self.stream_chunks),
+            text: String::new(),
+        }))
     }
 }
 
@@ -246,6 +333,48 @@ async fn websocket_session_emits_started_and_final_events() {
     assert_eq!(started["event"], "session_started");
     assert_eq!(final_event["event"], "final");
     assert_eq!(final_event["text"], "hello world");
+
+    server.abort();
+}
+
+#[tokio::test]
+async fn websocket_uses_native_streaming_session_when_backend_supports_it() {
+    let mut settings = aximo::config::Settings::default();
+    settings.limits.realtime_partial_min_chunk_bytes = 1;
+    let (engine, short_calls, stream_chunks) = NativeStreamingEngine::new();
+    let app = aximo::app::build_app(
+        settings,
+        Arc::new(aximo_inference::engine::FakeEngine),
+        Arc::new(engine),
+    );
+    let (url, server) = spawn_server_with_app(app).await;
+    let (mut socket, _) = connect_async(url).await.unwrap();
+
+    socket
+        .send(Message::Text(r#"{"event":"start"}"#.into()))
+        .await
+        .unwrap();
+    let started = next_event(&mut socket).await;
+    assert_eq!(started["event"], "session_started");
+
+    socket
+        .send(Message::Binary(vec![0_u8; 3_200].into()))
+        .await
+        .unwrap();
+    let partial = next_event(&mut socket).await;
+    assert_eq!(partial["event"], "partial");
+    assert_eq!(partial["text"], "chunk");
+
+    socket
+        .send(Message::Text(r#"{"event":"stop"}"#.into()))
+        .await
+        .unwrap();
+    let final_event = next_event(&mut socket).await;
+    assert_eq!(final_event["event"], "final");
+    assert_eq!(final_event["text"], "chunk");
+
+    assert_eq!(short_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(stream_chunks.lock().unwrap().as_slice(), &[3_200]);
 
     server.abort();
 }

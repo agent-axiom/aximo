@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use aximo_core::EngineCapabilities;
-use aximo_inference::engine::SpeechEngine;
+use aximo_inference::engine::{InferenceError, SpeechEngine, StreamingSpeechSession};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 #[derive(Clone)]
@@ -32,6 +32,12 @@ impl EngineRuntime {
 
     pub fn capabilities(&self) -> EngineCapabilities {
         self.engine.capabilities()
+    }
+
+    pub fn start_streaming_session(
+        &self,
+    ) -> Result<Box<dyn StreamingSpeechSession>, InferenceError> {
+        self.engine.start_streaming_session()
     }
 
     pub async fn acquire_execution_permit(&self) -> OwnedSemaphorePermit {

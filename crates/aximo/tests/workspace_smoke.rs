@@ -135,6 +135,26 @@ fn workspace_exposes_benchmark_suite() {
 }
 
 #[test]
+fn workspace_documents_backend_capability_closure() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(2)
+        .expect("workspace root");
+    let readme = std::fs::read_to_string(root.join("README.md")).unwrap();
+    let architecture = std::fs::read_to_string(root.join("docs/architecture.md")).unwrap();
+    let realtime_protocol =
+        std::fs::read_to_string(root.join("docs/realtime-protocol.md")).unwrap();
+
+    assert!(readme.contains("backend extension point for native streaming sessions"));
+    assert!(readme.contains("bounded windowed-sinc"));
+    assert!(readme.contains("supports_language_detection=false"));
+    assert!(architecture.contains("start_streaming_session()"));
+    assert!(architecture.contains("accept_pcm_chunk(chunk)"));
+    assert!(realtime_protocol.contains("supports_native_streaming=true"));
+    assert!(realtime_protocol.contains("finish()"));
+}
+
+#[test]
 fn workspace_exposes_kubernetes_manifests() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .ancestors()
@@ -166,11 +186,16 @@ fn workspace_exposes_security_release_hardening() {
     let container_workflow =
         std::fs::read_to_string(root.join(".github/workflows/container.yml")).unwrap();
     let security_policy = std::fs::read_to_string(root.join("SECURITY.md")).unwrap();
+    let justfile = std::fs::read_to_string(root.join("justfile")).unwrap();
 
     assert!(root.join("deny.toml").exists());
     assert!(security_workflow.contains("cargo audit"));
     assert!(security_workflow.contains("cargo deny check"));
     assert!(security_workflow.contains("cargo cyclonedx"));
+    assert!(justfile.contains("security:"));
+    assert!(justfile.contains("cargo audit --deny warnings"));
+    assert!(justfile.contains("cargo deny check"));
+    assert!(justfile.contains("cargo cyclonedx --format json"));
     assert!(container_workflow.contains("sbom: true"));
     assert!(container_workflow.contains("provenance: true"));
     assert!(security_policy.contains("Reporting a Vulnerability"));

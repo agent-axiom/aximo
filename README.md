@@ -154,7 +154,7 @@ Example response:
 }
 ```
 
-For the current local ONNX adapters, Parakeet reports English with timestamps and GigaAM reports Russian without timestamps. Neither exposes language detection or native incremental streaming through `transcribe-rs` 0.3.x.
+For the current local ONNX adapters, Parakeet reports English with timestamps and GigaAM reports Russian without timestamps. Neither exposes language detection or native incremental streaming through `transcribe-rs` 0.3.x. Aximo now has a backend extension point for native streaming sessions and automatically switches the realtime WebSocket path to it when the configured backend reports `supports_native_streaming=true`; the bundled Parakeet/GigaAM adapters correctly stay on bounded buffered realtime.
 
 ## Short Audio Example
 
@@ -217,8 +217,8 @@ Unsupported short-audio media types return `415 Unsupported Media Type` with cod
 
 ## Realtime Example
 
-Realtime uses WebSocket and raw `pcm_s16le`, `16 kHz`, mono binary chunks. This is bounded buffered realtime, not a true incremental streaming decoder.
-Partial hypotheses are computed from a bounded rolling recent window and use latest-wins coalescing under load, so they favor freshness over a steady partial cadence. The final transcription on `stop` waits for the realtime inference slot and runs over the full bounded session buffer.
+Realtime uses WebSocket and raw `pcm_s16le`, `16 kHz`, mono binary chunks. If `/v1/capabilities` reports `supports_native_streaming=true`, the WebSocket handler creates a stateful native streaming session and sends chunks to that backend without building a full final buffer. Otherwise, Aximo uses bounded buffered realtime.
+For bounded buffered realtime, partial hypotheses are computed from a bounded rolling recent window and use latest-wins coalescing under load, so they favor freshness over a steady partial cadence. The final transcription on `stop` waits for the realtime inference slot and runs over the full bounded session buffer.
 Admission limits and inference limits are configured separately: `max_short_audio_requests` and `max_realtime_sessions` bound accepted work, while `max_short_inferences` and `max_realtime_inferences` bound per-path inference admission. Actual backend execution is additionally protected by a per-engine model gate, shared when offline and realtime reuse the same engine instance.
 Current CPU model execution is safety-first: one loaded model instance has one execution slot. Increase throughput by running more service replicas or, in a future worker-pool design, by loading multiple model replicas.
 Realtime server events are sent through a bounded per-socket queue; clients that stop reading can be disconnected instead of accumulating unbounded memory.
@@ -318,11 +318,11 @@ On SIGINT or SIGTERM, Aximo notifies active websocket handlers, sends close fram
 
 ## Known Limits
 
-- Realtime is bounded buffered realtime unless `/v1/capabilities` reports `supports_native_streaming=true` for the realtime backend.
+- Realtime uses a native streaming session only when `/v1/capabilities` reports `supports_native_streaming=true`; Parakeet and GigaAM currently report `false`, so they intentionally use bounded buffered realtime.
 - `segments` is backend-dependent and only returned when `timestamps=true`; `detected_language` stays `null` while `/v1/capabilities` reports `supports_language_detection=false`.
 - Container decode now avoids an extra input-buffer copy from axum `Bytes`, but decoded samples are still materialized in memory before normalization.
 - Audio resampling now uses a bounded windowed-sinc path, but production WER/CER work should still validate preprocessing quality against real audio.
-- Remaining product work is backend-driven: add a backend that exposes language detection/native streaming when those capabilities are required.
+- Remaining product work is backend-driven: plug in a backend that exposes language detection when that capability is required.
 
 ## Development
 

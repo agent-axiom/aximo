@@ -41,7 +41,7 @@ sequenceDiagram
 
 ### Realtime
 
-Realtime is intentionally implemented as bounded buffered realtime. The service accepts live WebSocket chunks and emits partial/final events, but the current `transcribe-rs` path still runs bounded offline decodes rather than a true incremental streaming decoder.
+Realtime has two execution modes. If the configured realtime backend reports `supports_native_streaming=true`, the WebSocket handler creates a stateful backend streaming session and passes each chunk directly to it. Otherwise, Aximo uses bounded buffered realtime: live WebSocket chunks produce partial/final events, but the current Parakeet/GigaAM `transcribe-rs` paths still run bounded offline decodes rather than a true incremental decoder.
 
 ```mermaid
 sequenceDiagram
@@ -56,23 +56,37 @@ sequenceDiagram
     W->>S: acquire realtime session permit
     S-->>W: session permit
     W->>M: create session
+    alt backend supports native streaming
+        W->>E: start_streaming_session()
+    end
     W-->>C: session_started
     C->>W: binary audio chunk
-    W->>M: append chunk
-    W->>M: evaluate partial cadence / inflight state
-    W->>P: spawn partial job when eligible
-    P->>S: await realtime inference permit
-    S-->>P: inference permit
-    P->>E: transcribe_short(latest rolling buffer)
-    E-->>P: partial text
-    P-->>C: partial
-    Note over W,P: stale partial demand collapses into one latest follow-up partial
+    alt native streaming backend
+        W->>E: accept_pcm_chunk(chunk)
+        E-->>W: optional partial text
+        W-->>C: partial
+    else bounded buffered backend
+        W->>M: append chunk
+        W->>M: evaluate partial cadence / inflight state
+        W->>P: spawn partial job when eligible
+        P->>S: await realtime inference permit
+        S-->>P: inference permit
+        P->>E: transcribe_short(latest rolling buffer)
+        E-->>P: partial text
+        P-->>C: partial
+        Note over W,P: stale partial demand collapses into one latest follow-up partial
+    end
     C->>W: stop
-    W->>M: finish session
-    W->>S: await realtime inference permit
-    S-->>W: inference permit
-    W->>E: transcribe_short(final buffer)
-    E-->>W: final text
+    alt native streaming backend
+        W->>E: finish()
+        E-->>W: final text
+    else bounded buffered backend
+        W->>M: finish session
+        W->>S: await realtime inference permit
+        S-->>W: inference permit
+        W->>E: transcribe_short(final buffer)
+        E-->>W: final text
+    end
     W-->>C: final
 ```
 
@@ -89,7 +103,7 @@ sequenceDiagram
 - `POST /v1/transcriptions` accepts `engine`, `language`/`language_hint`, and `timestamps` query options. `engine` must match the configured offline engine for the service instance; metadata options are forwarded but remain backend-capability dependent.
 - `GET /v1/capabilities` reports the active offline/realtime model capabilities from the backend adapter, including supported languages, timestamp support, language-detection support, and native streaming support.
 - Short-audio container decode takes axum `Bytes` directly to avoid an extra input-buffer copy. Decoded samples are still materialized in memory before normalization and are bounded by configured sample/duration/body limits.
-- Realtime partials are best-effort and latest-wins under saturation; final transcriptions remain strict and run against the full bounded session buffer.
+- Realtime partials are best-effort and latest-wins under saturation for bounded buffered backends; native streaming backends may return partials directly from their stateful streaming session. Final transcriptions remain strict in both modes.
 - `segments` and `detected_language` are capability-dependent response fields. Aximo maps real `transcribe-rs` segment metadata when `timestamps=true` and the backend provides it. `detected_language` remains `null` while `/v1/capabilities` reports `supports_language_detection=false`.
 
 ## Observability

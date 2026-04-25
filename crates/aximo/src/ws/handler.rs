@@ -1,7 +1,7 @@
 use std::time::{Duration, Instant};
 
 use aximo_core::{PartialSchedule, SessionError, ShortAudioRequest};
-use aximo_inference::engine::InferenceError;
+use aximo_inference::engine::{InferenceError, StreamingSpeechSession};
 use axum::{
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
@@ -58,8 +58,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
             }
         }
     });
-    let mut active_session_id: Option<String> = None;
-    let mut active_health_admission: Option<RealtimeHealthAdmission> = None;
+    let mut active_session: Option<ActiveRealtimeSession> = None;
     let mut shutdown = state.shutdown.subscribe();
 
     loop {
@@ -92,7 +91,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
 
                 match client_event.event.as_str() {
                     "start" => {
-                        if active_session_id.is_some() {
+                        if active_session.is_some() {
                             queue_or_break!(ServerEvent::error(
                                 "duplicate_start",
                                 "session already started for this socket",
@@ -113,9 +112,42 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                                 let session_id = state
                                     .session_manager
                                     .start_session(permit, state.realtime_session_limits);
+                                let native_stream = if state
+                                    .realtime_engine
+                                    .capabilities()
+                                    .supports_native_streaming
+                                {
+                                    match state.realtime_engine.start_streaming_session() {
+                                        Ok(stream) => Some(stream),
+                                        Err(error) => {
+                                            let _ =
+                                                state.session_manager.finish_session(&session_id);
+                                            health_admission.cancel(&state);
+                                            queue_or_break!(ServerEvent::error(
+                                                "streaming_start_failed",
+                                                error.to_string(),
+                                            ),);
+                                            continue;
+                                        }
+                                    }
+                                } else {
+                                    None
+                                };
+
                                 state.metrics.inc_ws_sessions_active();
-                                active_session_id = Some(session_id.clone());
-                                active_health_admission = Some(health_admission);
+                                active_session = Some(match native_stream {
+                                    Some(stream) => ActiveRealtimeSession::Native {
+                                        session_id: session_id.clone(),
+                                        health_admission,
+                                        stream,
+                                        started_at: Instant::now(),
+                                        bytes_received: 0,
+                                    },
+                                    None => ActiveRealtimeSession::Buffered {
+                                        session_id: session_id.clone(),
+                                        health_admission,
+                                    },
+                                });
                                 queue_or_break!(ServerEvent::session_started(session_id));
                             }
                             Err(_) => {
@@ -128,70 +160,8 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                         }
                     }
                     "stop" => {
-                        if let Some(session_id) = active_session_id.take() {
-                            let audio_bytes = state
-                                .session_manager
-                                .finish_session(&session_id)
-                                .unwrap_or_default();
-                            state.metrics.dec_ws_sessions_active();
-                            let audio_duration_ms = pcm_duration_ms(audio_bytes.len());
-                            let request = ShortAudioRequest {
-                                audio_bytes,
-                                content_type: "audio/pcm".to_string(),
-                                engine: None,
-                                language_hint: None,
-                                timestamps: false,
-                            };
-
-                            let wait_started_at = Instant::now();
-                            let _inference_permit =
-                                state.scheduler.acquire_realtime_inference().await;
-                            let wait_elapsed = wait_started_at.elapsed();
-
-                            let inference_started_at = Instant::now();
-                            let health_component =
-                                format!("realtime_final:{}", state.realtime_engine_name);
-                            match run_observed_blocking_inference_with_timeout(
-                                state.realtime_engine.clone(),
-                                request,
-                                state.realtime_final_timeout,
-                                state.metrics.clone(),
-                                "realtime_final",
-                            )
-                            .await
-                            {
-                                Ok(result) => {
-                                    state.runtime_health.record_success(health_component);
-                                    state.metrics.record_inference(
-                                        "realtime_final",
-                                        wait_elapsed,
-                                        inference_started_at.elapsed(),
-                                        audio_duration_ms,
-                                    );
-                                    queue_or_break!(ServerEvent::final_text(result.text));
-                                }
-                                Err(error) => {
-                                    record_inference_health(
-                                        &state,
-                                        &health_component,
-                                        "realtime_final",
-                                        &error,
-                                    );
-                                    state.metrics.record_inference(
-                                        "realtime_final",
-                                        wait_elapsed,
-                                        inference_started_at.elapsed(),
-                                        audio_duration_ms,
-                                    );
-                                    queue_or_break!(map_realtime_inference_error(
-                                        error,
-                                        "realtime final inference timed out"
-                                    ),);
-                                }
-                            }
-                            if let Some(health_admission) = active_health_admission.take() {
-                                health_admission.cancel(&state);
-                            }
+                        if let Some(session) = active_session.take() {
+                            finish_active_session(&state, session, &event_tx, &overflow_tx).await;
                         } else {
                             queue_or_break!(ServerEvent::error(
                                 "no_active_session",
@@ -208,7 +178,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                 }
             }
             Message::Binary(chunk) => {
-                if let Some(session_id) = active_session_id.as_deref() {
+                if let Some(session) = active_session.as_mut() {
                     if chunk.len() % PCM_BYTES_PER_SAMPLE != 0 {
                         queue_or_break!(ServerEvent::error(
                             "invalid_audio_chunk",
@@ -217,49 +187,97 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                         continue;
                     }
 
-                    match state.session_manager.append_audio(session_id, &chunk) {
-                        Ok(()) => {
-                            let schedule = state
-                                .session_manager
-                                .maybe_begin_partial(session_id, state.realtime_partial_limits)
-                                .unwrap_or(PartialSchedule::Skip);
+                    match session {
+                        ActiveRealtimeSession::Buffered { session_id, .. } => {
+                            match state.session_manager.append_audio(session_id, &chunk) {
+                                Ok(()) => {
+                                    let schedule = state
+                                        .session_manager
+                                        .maybe_begin_partial(
+                                            session_id,
+                                            state.realtime_partial_limits,
+                                        )
+                                        .unwrap_or(PartialSchedule::Skip);
 
-                            if matches!(schedule, PartialSchedule::StartNow) {
-                                spawn_partial_inference(
-                                    state.clone(),
-                                    session_id.to_string(),
-                                    event_tx.clone(),
-                                    overflow_tx.clone(),
-                                );
+                                    if matches!(schedule, PartialSchedule::StartNow) {
+                                        spawn_partial_inference(
+                                            state.clone(),
+                                            session_id.to_string(),
+                                            event_tx.clone(),
+                                            overflow_tx.clone(),
+                                        );
+                                    }
+                                }
+                                Err(SessionError::SessionTooLarge) => {
+                                    cleanup_active_session(&state, &mut active_session);
+                                    queue_or_break!(ServerEvent::error(
+                                        "realtime_session_too_large",
+                                        "realtime session exceeded configured byte limit",
+                                    ),);
+                                }
+                                Err(SessionError::SessionTooLong) => {
+                                    cleanup_active_session(&state, &mut active_session);
+                                    queue_or_break!(ServerEvent::error(
+                                        "realtime_session_too_long",
+                                        "realtime session exceeded configured duration limit",
+                                    ),);
+                                }
+                                Err(SessionError::MissingSession) => {
+                                    queue_or_break!(ServerEvent::error(
+                                        "audio_append_failed",
+                                        "failed to append audio to the active realtime session",
+                                    ),);
+                                }
                             }
                         }
-                        Err(SessionError::SessionTooLarge) => {
-                            cleanup_active_session(
-                                &state,
-                                &mut active_session_id,
-                                &mut active_health_admission,
-                            );
-                            queue_or_break!(ServerEvent::error(
-                                "realtime_session_too_large",
-                                "realtime session exceeded configured byte limit",
-                            ),);
-                        }
-                        Err(SessionError::SessionTooLong) => {
-                            cleanup_active_session(
-                                &state,
-                                &mut active_session_id,
-                                &mut active_health_admission,
-                            );
-                            queue_or_break!(ServerEvent::error(
-                                "realtime_session_too_long",
-                                "realtime session exceeded configured duration limit",
-                            ),);
-                        }
-                        Err(SessionError::MissingSession) => {
-                            queue_or_break!(ServerEvent::error(
-                                "audio_append_failed",
-                                "failed to append audio to the active realtime session",
-                            ),);
+                        ActiveRealtimeSession::Native {
+                            stream,
+                            started_at,
+                            bytes_received,
+                            ..
+                        } => {
+                            if started_at.elapsed() > state.realtime_session_limits.max_duration {
+                                cleanup_active_session(&state, &mut active_session);
+                                queue_or_break!(ServerEvent::error(
+                                    "realtime_session_too_long",
+                                    "realtime session exceeded configured duration limit",
+                                ),);
+                                continue;
+                            }
+                            if bytes_received.saturating_add(chunk.len())
+                                > state.realtime_session_limits.max_bytes
+                            {
+                                cleanup_active_session(&state, &mut active_session);
+                                queue_or_break!(ServerEvent::error(
+                                    "realtime_session_too_large",
+                                    "realtime session exceeded configured byte limit",
+                                ),);
+                                continue;
+                            }
+
+                            *bytes_received = bytes_received.saturating_add(chunk.len());
+                            let health_component =
+                                format!("realtime_partial:{}", state.realtime_engine_name);
+                            match stream.accept_pcm_chunk(&chunk) {
+                                Ok(Some(result)) => {
+                                    state.runtime_health.record_success(health_component);
+                                    queue_or_break!(ServerEvent::partial_text(result.text));
+                                }
+                                Ok(None) => {}
+                                Err(error) => {
+                                    record_native_inference_health(
+                                        &state,
+                                        &health_component,
+                                        "realtime_partial",
+                                        &error,
+                                    );
+                                    cleanup_active_session(&state, &mut active_session);
+                                    queue_or_break!(ServerEvent::error(
+                                        "inference_failed",
+                                        error.to_string(),
+                                    ),);
+                                }
+                            }
                         }
                     }
                 } else {
@@ -274,7 +292,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
         }
     }
 
-    cleanup_active_session(&state, &mut active_session_id, &mut active_health_admission);
+    cleanup_active_session(&state, &mut active_session);
     let _ = close_tx.send(());
     drop(event_tx);
     tokio::select! {
@@ -379,6 +397,151 @@ fn spawn_partial_inference(
     });
 }
 
+enum ActiveRealtimeSession {
+    Buffered {
+        session_id: String,
+        health_admission: RealtimeHealthAdmission,
+    },
+    Native {
+        session_id: String,
+        health_admission: RealtimeHealthAdmission,
+        stream: Box<dyn StreamingSpeechSession>,
+        started_at: Instant,
+        bytes_received: usize,
+    },
+}
+
+async fn finish_active_session(
+    state: &AppState,
+    session: ActiveRealtimeSession,
+    event_tx: &mpsc::Sender<ServerEvent>,
+    overflow_tx: &mpsc::Sender<()>,
+) {
+    match session {
+        ActiveRealtimeSession::Buffered {
+            session_id,
+            health_admission,
+        } => {
+            let audio_bytes = state
+                .session_manager
+                .finish_session(&session_id)
+                .unwrap_or_default();
+            state.metrics.dec_ws_sessions_active();
+            let audio_duration_ms = pcm_duration_ms(audio_bytes.len());
+            let request = ShortAudioRequest {
+                audio_bytes,
+                content_type: "audio/pcm".to_string(),
+                engine: None,
+                language_hint: None,
+                timestamps: false,
+            };
+
+            let wait_started_at = Instant::now();
+            let _inference_permit = state.scheduler.acquire_realtime_inference().await;
+            let wait_elapsed = wait_started_at.elapsed();
+
+            let inference_started_at = Instant::now();
+            let health_component = format!("realtime_final:{}", state.realtime_engine_name);
+            match run_observed_blocking_inference_with_timeout(
+                state.realtime_engine.clone(),
+                request,
+                state.realtime_final_timeout,
+                state.metrics.clone(),
+                "realtime_final",
+            )
+            .await
+            {
+                Ok(result) => {
+                    state.runtime_health.record_success(health_component);
+                    state.metrics.record_inference(
+                        "realtime_final",
+                        wait_elapsed,
+                        inference_started_at.elapsed(),
+                        audio_duration_ms,
+                    );
+                    let _ = queue_event_or_overflow(
+                        state,
+                        event_tx,
+                        overflow_tx,
+                        ServerEvent::final_text(result.text),
+                    );
+                }
+                Err(error) => {
+                    record_inference_health(state, &health_component, "realtime_final", &error);
+                    state.metrics.record_inference(
+                        "realtime_final",
+                        wait_elapsed,
+                        inference_started_at.elapsed(),
+                        audio_duration_ms,
+                    );
+                    let _ = queue_event_or_overflow(
+                        state,
+                        event_tx,
+                        overflow_tx,
+                        map_realtime_inference_error(error, "realtime final inference timed out"),
+                    );
+                }
+            }
+            health_admission.cancel(state);
+        }
+        ActiveRealtimeSession::Native {
+            session_id,
+            health_admission,
+            mut stream,
+            bytes_received,
+            ..
+        } => {
+            let _ = state.session_manager.finish_session(&session_id);
+            state.metrics.dec_ws_sessions_active();
+            let audio_duration_ms = pcm_duration_ms(bytes_received);
+            let wait_started_at = Instant::now();
+            let _inference_permit = state.scheduler.acquire_realtime_inference().await;
+            let wait_elapsed = wait_started_at.elapsed();
+
+            let inference_started_at = Instant::now();
+            let health_component = format!("realtime_final:{}", state.realtime_engine_name);
+            match stream.finish() {
+                Ok(result) => {
+                    state.runtime_health.record_success(health_component);
+                    state.metrics.record_inference(
+                        "realtime_final",
+                        wait_elapsed,
+                        inference_started_at.elapsed(),
+                        audio_duration_ms,
+                    );
+                    let _ = queue_event_or_overflow(
+                        state,
+                        event_tx,
+                        overflow_tx,
+                        ServerEvent::final_text(result.text),
+                    );
+                }
+                Err(error) => {
+                    record_native_inference_health(
+                        state,
+                        &health_component,
+                        "realtime_final",
+                        &error,
+                    );
+                    state.metrics.record_inference(
+                        "realtime_final",
+                        wait_elapsed,
+                        inference_started_at.elapsed(),
+                        audio_duration_ms,
+                    );
+                    let _ = queue_event_or_overflow(
+                        state,
+                        event_tx,
+                        overflow_tx,
+                        ServerEvent::error("inference_failed", error.to_string()),
+                    );
+                }
+            }
+            health_admission.cancel(state);
+        }
+    }
+}
+
 fn queue_event_or_overflow(
     state: &AppState,
     event_tx: &mpsc::Sender<ServerEvent>,
@@ -458,8 +621,29 @@ fn record_inference_health(
             .runtime_health
             .record_failure(component, format!("{kind} engine unavailable")),
         BlockingInferenceError::Inference(
-            InferenceError::InvalidAudio(_) | InferenceError::UnsupportedEngine(_),
+            InferenceError::InvalidAudio(_)
+            | InferenceError::UnsupportedEngine(_)
+            | InferenceError::UnsupportedStreaming(_),
         ) => {}
+    }
+}
+
+fn record_native_inference_health(
+    state: &AppState,
+    component: &str,
+    kind: &'static str,
+    error: &InferenceError,
+) {
+    match error {
+        InferenceError::Runtime(_) => state
+            .runtime_health
+            .record_failure(component, format!("{kind} runtime inference error")),
+        InferenceError::Unavailable(_) => state
+            .runtime_health
+            .record_failure(component, format!("{kind} engine unavailable")),
+        InferenceError::InvalidAudio(_)
+        | InferenceError::UnsupportedEngine(_)
+        | InferenceError::UnsupportedStreaming(_) => {}
     }
 }
 
@@ -504,17 +688,22 @@ fn admit_realtime_engine(state: &AppState) -> Result<RealtimeHealthAdmission, St
     Ok(admission)
 }
 
-fn cleanup_active_session(
-    state: &AppState,
-    active_session_id: &mut Option<String>,
-    active_health_admission: &mut Option<RealtimeHealthAdmission>,
-) {
-    if let Some(session_id) = active_session_id.take() {
+fn cleanup_active_session(state: &AppState, active_session: &mut Option<ActiveRealtimeSession>) {
+    if let Some(session) = active_session.take() {
+        let (session_id, health_admission) = match session {
+            ActiveRealtimeSession::Buffered {
+                session_id,
+                health_admission,
+            }
+            | ActiveRealtimeSession::Native {
+                session_id,
+                health_admission,
+                ..
+            } => (session_id, health_admission),
+        };
         if state.session_manager.finish_session(&session_id).is_ok() {
             state.metrics.dec_ws_sessions_active();
         }
-    }
-    if let Some(health_admission) = active_health_admission.take() {
         health_admission.cancel(state);
     }
 }

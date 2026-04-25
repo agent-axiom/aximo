@@ -339,6 +339,11 @@ fn map_inference_error(error: InferenceError) -> HttpError {
             "inference_runtime_error",
             format!("runtime inference error: {message}"),
         ),
+        InferenceError::UnsupportedStreaming(message) => HttpError::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "streaming_unsupported",
+            format!("native streaming is not supported by engine: {message}"),
+        ),
     }
 }
 
@@ -377,7 +382,9 @@ fn record_inference_health(
             .runtime_health
             .record_failure(component, format!("{kind} engine unavailable")),
         BlockingInferenceError::Inference(
-            InferenceError::InvalidAudio(_) | InferenceError::UnsupportedEngine(_),
+            InferenceError::InvalidAudio(_)
+            | InferenceError::UnsupportedEngine(_)
+            | InferenceError::UnsupportedStreaming(_),
         ) => {}
     }
 }

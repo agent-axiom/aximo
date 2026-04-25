@@ -1,6 +1,15 @@
 use aximo_core::{EngineCapabilities, ShortAudioRequest, ShortAudioResult};
 use thiserror::Error;
 
+pub trait StreamingSpeechSession: Send {
+    fn accept_pcm_chunk(
+        &mut self,
+        chunk: &[u8],
+    ) -> Result<Option<ShortAudioResult>, InferenceError>;
+
+    fn finish(&mut self) -> Result<ShortAudioResult, InferenceError>;
+}
+
 pub trait SpeechEngine: Send + Sync {
     fn transcribe_short(
         &self,
@@ -9,6 +18,12 @@ pub trait SpeechEngine: Send + Sync {
 
     fn capabilities(&self) -> EngineCapabilities {
         EngineCapabilities::unknown("unknown")
+    }
+
+    fn start_streaming_session(&self) -> Result<Box<dyn StreamingSpeechSession>, InferenceError> {
+        Err(InferenceError::UnsupportedStreaming(
+            self.capabilities().engine,
+        ))
     }
 }
 
@@ -22,6 +37,8 @@ pub enum InferenceError {
     InvalidAudio(String),
     #[error("runtime inference error: {0}")]
     Runtime(String),
+    #[error("native streaming is not supported by engine: {0}")]
+    UnsupportedStreaming(String),
 }
 
 pub struct FakeEngine;
@@ -106,6 +123,15 @@ mod tests {
         assert!(capabilities.supports_timestamps);
         assert!(!capabilities.supports_language_detection);
         assert!(!capabilities.supports_native_streaming);
+    }
+
+    #[test]
+    fn default_streaming_session_reports_unsupported() {
+        match FakeEngine.start_streaming_session() {
+            Err(InferenceError::UnsupportedStreaming(engine)) => assert_eq!(engine, "fake"),
+            Err(error) => panic!("unexpected error: {error}"),
+            Ok(_) => panic!("fake engine should not start a streaming session"),
+        }
     }
 
     #[test]

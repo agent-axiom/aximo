@@ -273,6 +273,9 @@ impl aximo_inference::engine::SpeechEngine for StaticErrorEngine {
             aximo_inference::engine::InferenceError::Runtime(message) => {
                 aximo_inference::engine::InferenceError::Runtime(message.clone())
             }
+            aximo_inference::engine::InferenceError::UnsupportedStreaming(message) => {
+                aximo_inference::engine::InferenceError::UnsupportedStreaming(message.clone())
+            }
         })
     }
 }
