@@ -147,7 +147,7 @@ fn normalize_decoded_audio(decoded: DecodedAudio) -> Vec<u8> {
     let resampled = if decoded.sample_rate == TARGET_SAMPLE_RATE {
         mono
     } else {
-        linear_resample(&mono, decoded.sample_rate, TARGET_SAMPLE_RATE)
+        windowed_sinc_resample(&mono, decoded.sample_rate, TARGET_SAMPLE_RATE)
     };
 
     encode_pcm_s16le(&resampled)
@@ -184,7 +184,7 @@ fn downmix_to_mono(samples: &[f32], channels: usize) -> Vec<f32> {
         .collect()
 }
 
-fn linear_resample(samples: &[f32], source_rate: u32, target_rate: u32) -> Vec<f32> {
+fn windowed_sinc_resample(samples: &[f32], source_rate: u32, target_rate: u32) -> Vec<f32> {
     if samples.is_empty() || source_rate == 0 || target_rate == 0 {
         return Vec::new();
     }
@@ -196,18 +196,57 @@ fn linear_resample(samples: &[f32], source_rate: u32, target_rate: u32) -> Vec<f
     let output_len =
         ((samples.len() as u64 * target_rate as u64) / source_rate as u64).max(1) as usize;
     let mut output = Vec::with_capacity(output_len);
+    let cutoff = (target_rate as f64 / source_rate as f64).min(1.0);
+    let radius = 8_i64;
 
     for index in 0..output_len {
         let position = index as f64 * source_rate as f64 / target_rate as f64;
-        let left_index = position.floor() as usize;
-        let right_index = (left_index + 1).min(samples.len().saturating_sub(1));
-        let weight = (position - left_index as f64) as f32;
-        let left = samples[left_index];
-        let right = samples[right_index];
-        output.push(left + (right - left) * weight);
+        let center = position.floor() as i64;
+        let mut weighted_sum = 0.0_f64;
+        let mut weight_sum = 0.0_f64;
+
+        for sample_index in (center - radius + 1)..=(center + radius) {
+            if sample_index < 0 || sample_index >= samples.len() as i64 {
+                continue;
+            }
+
+            let distance = position - sample_index as f64;
+            let window = hann_window(distance, radius as f64);
+            if window == 0.0 {
+                continue;
+            }
+            let weight = cutoff * sinc(distance * cutoff) * window;
+            weighted_sum += samples[sample_index as usize] as f64 * weight;
+            weight_sum += weight;
+        }
+
+        let sample = if weight_sum.abs() > f64::EPSILON {
+            weighted_sum / weight_sum
+        } else {
+            0.0
+        };
+        output.push(sample.clamp(-1.0, 1.0) as f32);
     }
 
     output
+}
+
+fn sinc(x: f64) -> f64 {
+    if x.abs() < 1e-8 {
+        return 1.0;
+    }
+
+    let pix = std::f64::consts::PI * x;
+    pix.sin() / pix
+}
+
+fn hann_window(distance: f64, radius: f64) -> f64 {
+    let normalized = distance.abs() / radius;
+    if normalized >= 1.0 {
+        return 0.0;
+    }
+
+    0.5 * (1.0 + (std::f64::consts::PI * normalized).cos())
 }
 
 fn encode_pcm_s16le(samples: &[f32]) -> Vec<u8> {
@@ -306,9 +345,23 @@ mod tests {
     }
 
     #[test]
-    fn linear_resample_changes_sample_count_for_new_rate() {
-        let resampled = linear_resample(&[0.0, 0.5, 1.0, 0.5], 8_000, 16_000);
+    fn windowed_sinc_resample_changes_sample_count_for_new_rate() {
+        let resampled = windowed_sinc_resample(&[0.0, 0.5, 1.0, 0.5], 8_000, 16_000);
         assert!(resampled.len() > 4);
+    }
+
+    #[test]
+    fn windowed_sinc_resample_spreads_impulse_across_kernel() {
+        let mut samples = vec![0.0; 64];
+        samples[20] = 1.0;
+
+        let resampled = windowed_sinc_resample(&samples, 48_000, 16_000);
+        let non_zero_samples = resampled
+            .iter()
+            .filter(|sample| sample.abs() > 0.0001)
+            .count();
+
+        assert!(non_zero_samples > 1);
     }
 
     #[test]

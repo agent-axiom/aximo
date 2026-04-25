@@ -7,7 +7,7 @@ use std::{
 };
 
 use aximo_audio::{parse_audio_media_type, AudioError, AudioMediaType};
-use aximo_core::{ShortAudioRequest, ShortAudioResult};
+use aximo_core::{ShortAudioRequest, ShortAudioResult, TranscriptSegment};
 use hound::{SampleFormat, WavSpec, WavWriter};
 use tempfile::NamedTempFile;
 use transcribe_rs::{
@@ -17,11 +17,9 @@ use transcribe_rs::{
 
 use crate::engine::{InferenceError, SpeechEngine};
 
-// Current transcribe-rs ONNX integrations used here return plain transcript text
-// to this adapter path. They do not expose per-segment timestamps or detected
-// language through the current model adapter interface, so this runtime keeps
-// `segments` empty and `detected_language` as `None` while still reporting
-// measured input duration and processing time.
+// The transcribe-rs model trait can expose segment timestamps for capable
+// backends. It does not expose detected-language output through this adapter
+// path, so `detected_language` remains `None` unless a future backend adds it.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EngineKind {
@@ -91,7 +89,13 @@ trait ModelRunner: Send {
         &mut self,
         path: &Path,
         language: Option<String>,
-    ) -> Result<String, InferenceError>;
+    ) -> Result<BackendTranscription, InferenceError>;
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct BackendTranscription {
+    text: String,
+    segments: Vec<TranscriptSegment>,
 }
 
 struct TranscribeRsModelRunner {
@@ -103,7 +107,7 @@ impl ModelRunner for TranscribeRsModelRunner {
         &mut self,
         path: &Path,
         language: Option<String>,
-    ) -> Result<String, InferenceError> {
+    ) -> Result<BackendTranscription, InferenceError> {
         let options = TranscribeOptions {
             language,
             ..Default::default()
@@ -114,7 +118,19 @@ impl ModelRunner for TranscribeRsModelRunner {
             .transcribe_file(&path, &options)
             .map_err(|error| InferenceError::Runtime(error.to_string()))?;
 
-        Ok(result.text)
+        Ok(BackendTranscription {
+            text: result.text,
+            segments: result
+                .segments
+                .unwrap_or_default()
+                .into_iter()
+                .map(|segment| TranscriptSegment {
+                    start_ms: seconds_to_ms(segment.start),
+                    end_ms: seconds_to_ms(segment.end),
+                    text: segment.text,
+                })
+                .collect(),
+        })
     }
 }
 
@@ -134,11 +150,15 @@ impl<R: ModelRunner> SpeechEngine for TranscribeRsEngine<R> {
         let duration_ms = wav_duration_ms(wav_path)?;
 
         let mut model = self.model.lock().expect("transcribe-rs model lock");
-        let text = model.transcribe_file(wav_path, request.language_hint.clone())?;
+        let transcription = model.transcribe_file(wav_path, request.language_hint.clone())?;
 
         Ok(ShortAudioResult {
-            text,
-            segments: Vec::new(),
+            text: transcription.text,
+            segments: if request.timestamps {
+                transcription.segments
+            } else {
+                Vec::new()
+            },
             detected_language: None,
             engine: self.engine_name.clone(),
             duration_ms,
@@ -207,6 +227,14 @@ fn write_pcm_as_wav(path: &Path, bytes: &[u8]) -> Result<(), InferenceError> {
     Ok(())
 }
 
+fn seconds_to_ms(seconds: f32) -> u64 {
+    if !seconds.is_finite() || seconds <= 0.0 {
+        return 0;
+    }
+
+    (seconds * 1000.0).round() as u64
+}
+
 fn io_error(error: impl ToString) -> InferenceError {
     InferenceError::Runtime(error.to_string())
 }
@@ -230,6 +258,7 @@ mod tests {
 
     struct FakeRunner {
         text: String,
+        segments: Vec<TranscriptSegment>,
         seen_header: Option<[u8; 4]>,
         sleep_for: Option<Duration>,
     }
@@ -238,6 +267,16 @@ mod tests {
         fn new(text: &str) -> Self {
             Self {
                 text: text.to_string(),
+                segments: Vec::new(),
+                seen_header: None,
+                sleep_for: None,
+            }
+        }
+
+        fn with_segments(text: &str, segments: Vec<TranscriptSegment>) -> Self {
+            Self {
+                text: text.to_string(),
+                segments,
                 seen_header: None,
                 sleep_for: None,
             }
@@ -246,6 +285,7 @@ mod tests {
         fn with_delay(text: &str, sleep_for: Duration) -> Self {
             Self {
                 text: text.to_string(),
+                segments: Vec::new(),
                 seen_header: None,
                 sleep_for: Some(sleep_for),
             }
@@ -257,13 +297,16 @@ mod tests {
             &mut self,
             path: &Path,
             _language: Option<String>,
-        ) -> Result<String, InferenceError> {
+        ) -> Result<BackendTranscription, InferenceError> {
             let bytes = std::fs::read(path).map_err(io_error)?;
             self.seen_header = Some(bytes[0..4].try_into().expect("wav header"));
             if let Some(delay) = self.sleep_for {
                 std::thread::sleep(delay);
             }
-            Ok(self.text.clone())
+            Ok(BackendTranscription {
+                text: self.text.clone(),
+                segments: self.segments.clone(),
+            })
         }
     }
 
@@ -366,5 +409,56 @@ mod tests {
 
         assert_eq!(result.duration_ms, 1_000);
         assert!(result.processing_ms >= 5);
+    }
+
+    #[test]
+    fn transcribe_short_maps_backend_segments_when_requested() {
+        let segments = vec![TranscriptSegment {
+            start_ms: 120,
+            end_ms: 450,
+            text: "hello".to_string(),
+        }];
+        let engine = TranscribeRsEngine {
+            engine_name: "fake".to_string(),
+            model: Mutex::new(FakeRunner::with_segments("hello", segments.clone())),
+        };
+        let request = ShortAudioRequest {
+            audio_bytes: vec![0_u8; 32_000],
+            content_type: "audio/pcm".to_string(),
+            engine: None,
+            language_hint: None,
+            timestamps: true,
+        };
+
+        let result = engine.transcribe_short(request).unwrap();
+
+        assert_eq!(result.segments, segments);
+        assert_eq!(result.detected_language, None);
+    }
+
+    #[test]
+    fn transcribe_short_omits_backend_segments_when_timestamps_are_not_requested() {
+        let engine = TranscribeRsEngine {
+            engine_name: "fake".to_string(),
+            model: Mutex::new(FakeRunner::with_segments(
+                "hello",
+                vec![TranscriptSegment {
+                    start_ms: 120,
+                    end_ms: 450,
+                    text: "hello".to_string(),
+                }],
+            )),
+        };
+        let request = ShortAudioRequest {
+            audio_bytes: vec![0_u8; 32_000],
+            content_type: "audio/pcm".to_string(),
+            engine: None,
+            language_hint: None,
+            timestamps: false,
+        };
+
+        let result = engine.transcribe_short(request).unwrap();
+
+        assert!(result.segments.is_empty());
     }
 }

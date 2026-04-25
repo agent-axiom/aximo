@@ -88,7 +88,7 @@ sequenceDiagram
 - `POST /v1/transcriptions` accepts `engine`, `language`/`language_hint`, and `timestamps` query options. `engine` must match the configured offline engine for the service instance; metadata options are forwarded but remain backend-capability dependent.
 - Short-audio container decode takes axum `Bytes` directly to avoid an extra input-buffer copy. Decoded samples are still materialized in memory before normalization and are bounded by configured sample/duration/body limits.
 - Realtime partials are best-effort and latest-wins under saturation; final transcriptions remain strict and run against the full bounded session buffer.
-- `segments` and `detected_language` are capability-dependent response fields. The current `transcribe-rs` ONNX adapter path exposes plain transcript text, measured duration, and measured processing time, but not segment timestamps or real language detection.
+- `segments` and `detected_language` are capability-dependent response fields. Aximo maps real `transcribe-rs` segment metadata when `timestamps=true` and the backend provides it. `detected_language` remains `null` until a backend exposes real language detection.
 
 ## Observability
 

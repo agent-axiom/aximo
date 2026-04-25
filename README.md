@@ -135,7 +135,7 @@ Optional query parameters are accepted for API compatibility and forwarded to th
 
 - `engine`: must match the configured short-audio engine for this service instance, for example `parakeet`.
 - `language` or `language_hint`: optional backend language hint such as `ru`, `en`, or `auto`; `language_hint` wins when both are supplied.
-- `timestamps`: requests timestamp metadata when the backend supports it. The current `transcribe-rs` ONNX adapter is text-only, so `segments` still remains empty.
+- `timestamps`: requests timestamp metadata when the backend supports it. Parakeet can return backend-provided segments; GigaAM may still return an empty `segments` array.
 
 ```bash
 curl -X POST 'http://127.0.0.1:8080/v1/transcriptions?engine=parakeet&language=ru&timestamps=true' \
@@ -156,7 +156,7 @@ Example response:
 }
 ```
 
-With the current `transcribe-rs` ONNX adapters used here, `detected_language` is `null` when language detection is not exposed and `segments` stays empty when segmentation or timestamps are unavailable. `duration_ms` and `processing_ms` are measured values and vary per request.
+With the current `transcribe-rs` ONNX adapters used here, `detected_language` is `null` when language detection is not exposed. `segments` is populated only when `timestamps=true` and the selected backend returns real segment metadata. `duration_ms` and `processing_ms` are measured values and vary per request.
 
 Error responses from `POST /v1/transcriptions` are structured JSON:
 
@@ -272,10 +272,10 @@ On SIGINT or SIGTERM, Aximo notifies active websocket handlers, sends close fram
 ## Known Limits
 
 - Realtime is bounded buffered realtime, not a true streaming decoder.
-- The current `transcribe-rs` ONNX adapter path returns plain text; `segments` stays empty and `detected_language` stays `null` until backend metadata is exposed.
+- `segments` is backend-dependent and only returned when `timestamps=true`; `detected_language` stays `null` until a backend exposes real language detection.
 - Container decode now avoids an extra input-buffer copy from axum `Bytes`, but decoded samples are still materialized in memory before normalization.
-- Audio resampling is intentionally simple for MVP use; production WER/CER work should evaluate a higher-quality resampler.
-- Future hardening candidates: timestamp/language detection when backend metadata exposes it and a true incremental streaming decoder backend.
+- Audio resampling now uses a bounded windowed-sinc path, but production WER/CER work should still validate preprocessing quality against real audio.
+- Future hardening candidates: language detection when backend metadata exposes it and a true incremental streaming decoder backend.
 
 ## Development
 

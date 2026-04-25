@@ -164,7 +164,7 @@ fn health_ready_doc() {}
         ("engine" = Option<String>, Query, description = "Optional short-audio engine selector. Currently must match the configured offline engine."),
         ("language" = Option<String>, Query, description = "Optional language hint such as `ru`, `en`, or `auto`. Alias for `language_hint`."),
         ("language_hint" = Option<String>, Query, description = "Optional backend language hint; takes precedence over `language` when both are supplied."),
-        ("timestamps" = Option<bool>, Query, description = "Request segment/timestamp metadata when the backend supports it. The current transcribe-rs adapter is text-only.")
+        ("timestamps" = Option<bool>, Query, description = "Request segment/timestamp metadata when the backend supports it. Parakeet can return backend-provided segments; unsupported backends return an empty segments array.")
     ),
     responses(
         (status = 200, description = "Transcription completed. Optional metadata remains null or empty when the active engine integration does not expose it.", body = ShortAudioResultDoc),
