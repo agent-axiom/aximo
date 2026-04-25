@@ -1,4 +1,4 @@
-use aximo_core::{ShortAudioRequest, ShortAudioResult};
+use aximo_core::{EngineCapabilities, ShortAudioRequest, ShortAudioResult};
 use thiserror::Error;
 
 pub trait SpeechEngine: Send + Sync {
@@ -6,6 +6,10 @@ pub trait SpeechEngine: Send + Sync {
         &self,
         request: ShortAudioRequest,
     ) -> Result<ShortAudioResult, InferenceError>;
+
+    fn capabilities(&self) -> EngineCapabilities {
+        EngineCapabilities::unknown("unknown")
+    }
 }
 
 #[derive(Debug, Error)]
@@ -29,6 +33,18 @@ impl SpeechEngine for FakeEngine {
     ) -> Result<ShortAudioResult, InferenceError> {
         Ok(ShortAudioResult::new("hello world", "fake"))
     }
+
+    fn capabilities(&self) -> EngineCapabilities {
+        EngineCapabilities {
+            engine: "fake".to_string(),
+            model_name: "FakeEngine".to_string(),
+            sample_rate_hz: 16_000,
+            languages: vec!["en".to_string(), "ru".to_string()],
+            supports_timestamps: true,
+            supports_language_detection: false,
+            supports_native_streaming: false,
+        }
+    }
 }
 
 pub struct UnavailableEngine {
@@ -49,6 +65,10 @@ impl SpeechEngine for UnavailableEngine {
         _request: ShortAudioRequest,
     ) -> Result<ShortAudioResult, InferenceError> {
         Err(InferenceError::Unavailable(self.reason.clone()))
+    }
+
+    fn capabilities(&self) -> EngineCapabilities {
+        EngineCapabilities::unknown("unavailable")
     }
 }
 
@@ -72,6 +92,20 @@ mod tests {
 
         assert_eq!(result.text, "hello world");
         assert_eq!(result.engine, "fake");
+    }
+
+    #[test]
+    fn fake_engine_reports_test_capabilities() {
+        let capabilities = FakeEngine.capabilities();
+
+        assert_eq!(capabilities.engine, "fake");
+        assert_eq!(
+            capabilities.languages,
+            vec!["en".to_string(), "ru".to_string()]
+        );
+        assert!(capabilities.supports_timestamps);
+        assert!(!capabilities.supports_language_detection);
+        assert!(!capabilities.supports_native_streaming);
     }
 
     #[test]

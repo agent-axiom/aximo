@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use aximo_core::EngineCapabilities;
 use aximo_inference::engine::SpeechEngine;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
@@ -27,6 +28,10 @@ impl EngineRuntime {
 
     pub fn engine(&self) -> Arc<dyn SpeechEngine> {
         Arc::clone(&self.engine)
+    }
+
+    pub fn capabilities(&self) -> EngineCapabilities {
+        self.engine.capabilities()
     }
 
     pub async fn acquire_execution_permit(&self) -> OwnedSemaphorePermit {

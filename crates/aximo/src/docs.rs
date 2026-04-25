@@ -19,12 +19,21 @@ const RECORDER_STYLES: &str = include_str!("../static/docs/aximo-recorder.css");
 
 #[derive(OpenApi)]
 #[openapi(
-    paths(health_live_doc, health_ready_doc, transcribe_short_doc, realtime_doc),
+    paths(
+        health_live_doc,
+        health_ready_doc,
+        capabilities_doc,
+        transcribe_short_doc,
+        realtime_doc
+    ),
     components(
         schemas(
             AudioBinaryBodyDoc,
             ClientEventDoc,
+            CapabilitiesDoc,
             ComponentReadinessDoc,
+            EngineCapabilitiesDoc,
+            EngineRoleCapabilitiesDoc,
             ErrorResponseDoc,
             ReadinessDoc,
             ServerEventDoc,
@@ -82,6 +91,40 @@ struct ComponentReadinessDoc {
     /// Degradation reason when this component is `degraded`.
     #[schema(nullable)]
     reason: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+struct CapabilitiesDoc {
+    offline: EngineRoleCapabilitiesDoc,
+    realtime: EngineRoleCapabilitiesDoc,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+struct EngineRoleCapabilitiesDoc {
+    /// Configured engine name for this service role.
+    configured_engine: String,
+    /// Backend/model capabilities reported by the active adapter.
+    model: EngineCapabilitiesDoc,
+    /// `offline`, `native_streaming`, or `bounded_buffered_offline`.
+    mode: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+struct EngineCapabilitiesDoc {
+    /// Stable engine identifier reported by the backend.
+    engine: String,
+    /// Human-readable backend/model name.
+    model_name: String,
+    /// Expected model input sample rate in Hz.
+    sample_rate_hz: u32,
+    /// BCP-47 language codes reported by the backend.
+    languages: Vec<String>,
+    /// Whether the backend can return segment/timestamp metadata.
+    supports_timestamps: bool,
+    /// Whether the backend exposes detected-language output.
+    supports_language_detection: bool,
+    /// Whether the backend performs native incremental streaming inference.
+    supports_native_streaming: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
@@ -150,6 +193,15 @@ fn health_live_doc() {}
 )]
 #[allow(dead_code)]
 fn health_ready_doc() {}
+
+#[utoipa::path(
+    get,
+    path = "/v1/capabilities",
+    tag = "stt",
+    responses((status = 200, description = "Active engine metadata and backend capability contract", body = CapabilitiesDoc))
+)]
+#[allow(dead_code)]
+fn capabilities_doc() {}
 
 #[utoipa::path(
     post,

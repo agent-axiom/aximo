@@ -6,6 +6,7 @@
 
 - `POST /v1/transcriptions` for short audio
 - `GET /v1/realtime` for realtime WebSocket streaming
+- `GET /v1/capabilities` for active engine capability metadata
 - `GET /health/live` and `GET /health/ready` for liveness/readiness
 - `GET /openapi.json` for the OpenAPI schema
 - `GET /docs/` for Swagger UI with a built-in microphone recorder panel
@@ -25,6 +26,7 @@ Architecture and protocol details live in:
 - [docs/realtime-protocol.md](docs/realtime-protocol.md)
 - [docs/model-licenses.md](docs/model-licenses.md)
 - [docs/benchmarks.md](docs/benchmarks.md)
+- [docs/benchmark-baselines.md](docs/benchmark-baselines.md)
 - [docs/kubernetes.md](docs/kubernetes.md)
 
 ## Models
@@ -110,6 +112,49 @@ AXIMO_RUNTIME_DEGRADE_AFTER_CONSECUTIVE_FAILURES=3
 AXIMO_RUNTIME_DEGRADED_POLICY=readiness_only
 AXIMO_RUNTIME_DEGRADED_RECOVERY_COOLDOWN_MS=30000
 ```
+
+## Capabilities
+
+`GET /v1/capabilities` reports the active offline and realtime engine contract. Use this endpoint before relying on optional response metadata or native streaming behavior:
+
+```bash
+curl http://127.0.0.1:8080/v1/capabilities
+```
+
+Example response:
+
+```json
+{
+  "offline": {
+    "configured_engine": "parakeet",
+    "mode": "offline",
+    "model": {
+      "engine": "parakeet",
+      "model_name": "Parakeet",
+      "sample_rate_hz": 16000,
+      "languages": ["en"],
+      "supports_timestamps": true,
+      "supports_language_detection": false,
+      "supports_native_streaming": false
+    }
+  },
+  "realtime": {
+    "configured_engine": "parakeet",
+    "mode": "bounded_buffered_offline",
+    "model": {
+      "engine": "parakeet",
+      "model_name": "Parakeet",
+      "sample_rate_hz": 16000,
+      "languages": ["en"],
+      "supports_timestamps": true,
+      "supports_language_detection": false,
+      "supports_native_streaming": false
+    }
+  }
+}
+```
+
+For the current local ONNX adapters, Parakeet reports English with timestamps and GigaAM reports Russian without timestamps. Neither exposes language detection or native incremental streaming through `transcribe-rs` 0.3.x.
 
 ## Short Audio Example
 
@@ -273,11 +318,11 @@ On SIGINT or SIGTERM, Aximo notifies active websocket handlers, sends close fram
 
 ## Known Limits
 
-- Realtime is bounded buffered realtime, not a true streaming decoder.
-- `segments` is backend-dependent and only returned when `timestamps=true`; `detected_language` stays `null` until a backend exposes real language detection.
+- Realtime is bounded buffered realtime unless `/v1/capabilities` reports `supports_native_streaming=true` for the realtime backend.
+- `segments` is backend-dependent and only returned when `timestamps=true`; `detected_language` stays `null` while `/v1/capabilities` reports `supports_language_detection=false`.
 - Container decode now avoids an extra input-buffer copy from axum `Bytes`, but decoded samples are still materialized in memory before normalization.
 - Audio resampling now uses a bounded windowed-sinc path, but production WER/CER work should still validate preprocessing quality against real audio.
-- Future hardening candidates: language detection when backend metadata exposes it and a true incremental streaming decoder backend.
+- Remaining product work is backend-driven: add a backend that exposes language detection/native streaming when those capabilities are required.
 
 ## Development
 

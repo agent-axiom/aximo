@@ -150,6 +150,10 @@ fn build_app_with_shutdown_handle(
         .route("/health/live", axum::routing::get(http::health::live))
         .route("/health/ready", axum::routing::get(http::health::ready))
         .route(
+            "/v1/capabilities",
+            axum::routing::get(http::capabilities::capabilities),
+        )
+        .route(
             "/v1/transcriptions",
             axum::routing::post(http::transcriptions::transcribe_short)
                 .layer(DefaultBodyLimit::max(short_audio_body_limit))

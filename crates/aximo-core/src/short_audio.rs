@@ -10,6 +10,39 @@ pub struct ShortAudioRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct EngineCapabilities {
+    /// Stable engine identifier used in API requests and configuration.
+    pub engine: String,
+    /// Human-readable model/backend name reported by the adapter.
+    pub model_name: String,
+    /// Expected model input sample rate in Hz.
+    pub sample_rate_hz: u32,
+    /// BCP-47 language codes reported by the backend. Empty means unknown.
+    pub languages: Vec<String>,
+    /// Whether the backend can return segment/timestamp metadata.
+    pub supports_timestamps: bool,
+    /// Whether the backend exposes detected-language output.
+    pub supports_language_detection: bool,
+    /// Whether the backend performs native incremental streaming inference.
+    pub supports_native_streaming: bool,
+}
+
+impl EngineCapabilities {
+    pub fn unknown(engine: impl Into<String>) -> Self {
+        let engine = engine.into();
+        Self {
+            model_name: engine.clone(),
+            engine,
+            sample_rate_hz: 16_000,
+            languages: Vec::new(),
+            supports_timestamps: false,
+            supports_language_detection: false,
+            supports_native_streaming: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ShortAudioResult {
     /// Full transcript text returned by the backend.
     pub text: String,

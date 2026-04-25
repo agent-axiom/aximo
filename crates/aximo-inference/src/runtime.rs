@@ -7,7 +7,7 @@ use std::{
 };
 
 use aximo_audio::{parse_audio_media_type, AudioError, AudioMediaType};
-use aximo_core::{ShortAudioRequest, ShortAudioResult, TranscriptSegment};
+use aximo_core::{EngineCapabilities, ShortAudioRequest, ShortAudioResult, TranscriptSegment};
 use hound::{SampleFormat, WavSpec, WavWriter};
 use tempfile::NamedTempFile;
 use transcribe_rs::{
@@ -76,9 +76,25 @@ impl RuntimeEngineFactory {
                     .map_err(|error| InferenceError::Runtime(error.to_string()))?,
             ),
         };
+        let upstream_capabilities = model.capabilities();
 
         Ok(Arc::new(TranscribeRsEngine {
             engine_name: spec.kind.as_str().to_string(),
+            capabilities: EngineCapabilities {
+                engine: upstream_capabilities.engine_id.to_string(),
+                model_name: upstream_capabilities.name.to_string(),
+                sample_rate_hz: upstream_capabilities.sample_rate,
+                languages: upstream_capabilities
+                    .languages
+                    .iter()
+                    .map(|language| (*language).to_string())
+                    .collect(),
+                supports_timestamps: upstream_capabilities.supports_timestamps,
+                // transcribe-rs 0.3.x does not expose detected-language output
+                // through TranscriptionResult for the local ONNX adapters.
+                supports_language_detection: false,
+                supports_native_streaming: upstream_capabilities.supports_streaming,
+            },
             model: Mutex::new(TranscribeRsModelRunner { model }),
         }))
     }
@@ -136,6 +152,7 @@ impl ModelRunner for TranscribeRsModelRunner {
 
 struct TranscribeRsEngine<R = TranscribeRsModelRunner> {
     engine_name: String,
+    capabilities: EngineCapabilities,
     model: Mutex<R>,
 }
 
@@ -164,6 +181,10 @@ impl<R: ModelRunner> SpeechEngine for TranscribeRsEngine<R> {
             duration_ms,
             processing_ms: started_at.elapsed().as_millis() as u64,
         })
+    }
+
+    fn capabilities(&self) -> EngineCapabilities {
+        self.capabilities.clone()
     }
 }
 
@@ -310,6 +331,18 @@ mod tests {
         }
     }
 
+    fn fake_capabilities() -> EngineCapabilities {
+        EngineCapabilities {
+            engine: "fake".to_string(),
+            model_name: "FakeRunner".to_string(),
+            sample_rate_hz: 16_000,
+            languages: vec!["en".to_string(), "ru".to_string()],
+            supports_timestamps: true,
+            supports_language_detection: false,
+            supports_native_streaming: false,
+        }
+    }
+
     #[test]
     fn engine_kind_parses_and_formats_known_values() {
         assert_eq!(
@@ -369,6 +402,7 @@ mod tests {
     fn transcribe_short_converts_pcm_payload_to_wav_before_running_model() {
         let engine = TranscribeRsEngine {
             engine_name: "fake".to_string(),
+            capabilities: fake_capabilities(),
             model: Mutex::new(FakeRunner::new("decoded text")),
         };
         let request = ShortAudioRequest {
@@ -392,6 +426,7 @@ mod tests {
     fn transcribe_short_reports_measured_duration_and_processing_time() {
         let engine = TranscribeRsEngine {
             engine_name: "fake".to_string(),
+            capabilities: fake_capabilities(),
             model: Mutex::new(FakeRunner::with_delay(
                 "decoded text",
                 Duration::from_millis(5),
@@ -420,6 +455,7 @@ mod tests {
         }];
         let engine = TranscribeRsEngine {
             engine_name: "fake".to_string(),
+            capabilities: fake_capabilities(),
             model: Mutex::new(FakeRunner::with_segments("hello", segments.clone())),
         };
         let request = ShortAudioRequest {
@@ -440,6 +476,7 @@ mod tests {
     fn transcribe_short_omits_backend_segments_when_timestamps_are_not_requested() {
         let engine = TranscribeRsEngine {
             engine_name: "fake".to_string(),
+            capabilities: fake_capabilities(),
             model: Mutex::new(FakeRunner::with_segments(
                 "hello",
                 vec![TranscriptSegment {

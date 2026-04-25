@@ -19,6 +19,9 @@ setup-models:
 benchmark-api:
     ./scripts/benchmark-api.sh
 
+benchmark-fixtures:
+    ./scripts/generate-benchmark-fixtures.sh
+
 benchmark-report:
     ./scripts/render-benchmark-report.sh
 

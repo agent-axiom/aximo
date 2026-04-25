@@ -2,6 +2,8 @@
 
 Aximo includes a lightweight API benchmark harness for real service runs. It is intentionally external to `cargo test`: meaningful STT benchmarking requires a running service, mounted model files, and CPU/RAM limits that match the target deployment.
 
+Current reproducible smoke baselines are recorded in [benchmark-baselines.md](benchmark-baselines.md).
+
 ## Run
 
 Start the service first:
@@ -33,6 +35,15 @@ Then run:
 ```bash
 AXIMO_BENCH_FIXTURES_DIR=bench-fixtures AXIMO_BENCH_FORMATS="wav mp3 m4a flac" just benchmark-api
 ```
+
+For a local reproducible speech smoke benchmark on macOS, generate RU/EN TTS fixtures with transcript sidecars:
+
+```bash
+AXIMO_BENCH_FIXTURE_FORMATS="wav mp3 m4a flac" just benchmark-fixtures
+AXIMO_BENCH_FIXTURES_DIR=target/aximo-benchmarks/fixtures just benchmark-api
+```
+
+This uses `scripts/generate-benchmark-fixtures.sh`, macOS `say`, and `ffmpeg` for compressed variants. Treat these fixtures as API/performance smoke evidence, not a replacement for human speech WER/CER evaluation.
 
 When transcript sidecars are present, `results.csv` and `summary.txt` include WER and CER columns. Use real RU/EN, clean/noisy, short/medium/long samples for production evidence; synthetic tones should not be interpreted as STT quality data.
 

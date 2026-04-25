@@ -115,15 +115,21 @@ fn workspace_exposes_benchmark_suite() {
         .expect("workspace root");
     let justfile = std::fs::read_to_string(root.join("justfile")).unwrap();
     let docs = std::fs::read_to_string(root.join("docs/benchmarks.md")).unwrap();
+    let baseline_docs = root.join("docs/benchmark-baselines.md");
 
     assert!(root.join("scripts/benchmark-api.sh").exists());
     assert!(root.join("scripts/render-benchmark-report.sh").exists());
+    assert!(root.join("scripts/generate-benchmark-fixtures.sh").exists());
+    assert!(baseline_docs.exists());
     assert!(justfile.contains("benchmark-api:"));
     assert!(justfile.contains("benchmark-report:"));
+    assert!(justfile.contains("benchmark-fixtures:"));
     assert!(docs.contains("RTF"));
     assert!(docs.contains("WER"));
     assert!(docs.contains("AXIMO_BENCH_FIXTURES_DIR"));
     assert!(docs.contains("benchmark-report.md"));
+    assert!(docs.contains("generate-benchmark-fixtures.sh"));
+    assert!(docs.contains("benchmark-baselines.md"));
     assert!(docs.contains("Parakeet"));
     assert!(docs.contains("GigaAM"));
 }

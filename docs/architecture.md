@@ -10,6 +10,7 @@ flowchart LR
     API --> Core["crates/aximo-core"]
     API --> Inference["crates/aximo-inference"]
     API --> Audio["crates/aximo-audio"]
+    API --> Capabilities["/v1/capabilities"]
     API --> Metrics["/metrics"]
     Inference --> Models["Local model directory"]
 ```
@@ -86,9 +87,10 @@ sequenceDiagram
 - When the same offline and realtime engine config resolves to the same backend/model path, Aximo reuses one engine instance to avoid loading duplicate model copies. That saves RAM. Actual backend calls are additionally protected by a per-engine execution gate that is shared by offline and realtime when they share an engine `Arc`; the gate remains held until a blocking backend call exits, even if the client already received a timeout.
 - One loaded model instance has one execution slot. The short/realtime inference limits are admission-level controls; real model parallelism requires more service replicas or a future multi-replica engine worker pool.
 - `POST /v1/transcriptions` accepts `engine`, `language`/`language_hint`, and `timestamps` query options. `engine` must match the configured offline engine for the service instance; metadata options are forwarded but remain backend-capability dependent.
+- `GET /v1/capabilities` reports the active offline/realtime model capabilities from the backend adapter, including supported languages, timestamp support, language-detection support, and native streaming support.
 - Short-audio container decode takes axum `Bytes` directly to avoid an extra input-buffer copy. Decoded samples are still materialized in memory before normalization and are bounded by configured sample/duration/body limits.
 - Realtime partials are best-effort and latest-wins under saturation; final transcriptions remain strict and run against the full bounded session buffer.
-- `segments` and `detected_language` are capability-dependent response fields. Aximo maps real `transcribe-rs` segment metadata when `timestamps=true` and the backend provides it. `detected_language` remains `null` until a backend exposes real language detection.
+- `segments` and `detected_language` are capability-dependent response fields. Aximo maps real `transcribe-rs` segment metadata when `timestamps=true` and the backend provides it. `detected_language` remains `null` while `/v1/capabilities` reports `supports_language_detection=false`.
 
 ## Observability
 

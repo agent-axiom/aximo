@@ -6,4 +6,4 @@ pub use realtime::{
     PartialSchedule, RealtimePartialLimits, RealtimeSessionLimits, SessionError, SessionManager,
 };
 pub use scheduler::{CapacityError, Scheduler};
-pub use short_audio::{ShortAudioRequest, ShortAudioResult, TranscriptSegment};
+pub use short_audio::{EngineCapabilities, ShortAudioRequest, ShortAudioResult, TranscriptSegment};
