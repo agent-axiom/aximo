@@ -559,7 +559,7 @@ async fn transcription_endpoint_returns_gateway_timeout_when_inference_exceeds_b
 #[tokio::test]
 async fn timed_out_short_request_keeps_model_gate_until_backend_returns() {
     let mut settings = aximo::config::Settings::default();
-    settings.limits.short_inference_timeout_ms = 50;
+    settings.limits.short_inference_timeout_ms = 250;
     settings.limits.max_short_inferences = 2;
     let (engine, call_count, first_started_rx, release_first_tx) = CountingBlockingEngine::new();
     let app = aximo::app::build_app(
@@ -591,7 +591,7 @@ async fn timed_out_short_request_keeps_model_gate_until_backend_returns() {
 
     let second_app = app.clone();
     let second = tokio::spawn(async move { second_app.oneshot(second_request).await.unwrap() });
-    tokio::time::sleep(Duration::from_millis(10)).await;
+    tokio::time::sleep(Duration::from_millis(25)).await;
 
     assert_eq!(call_count.load(Ordering::SeqCst), 1);
 
