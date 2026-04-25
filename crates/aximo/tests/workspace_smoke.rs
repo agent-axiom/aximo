@@ -99,3 +99,24 @@ fn workspace_exposes_kubernetes_manifests() {
     assert!(deployment.contains("AXIMO_RUNTIME_DEGRADED_POLICY"));
     assert!(docs.contains("kubectl apply -k deploy/kubernetes"));
 }
+
+#[test]
+fn workspace_exposes_security_release_hardening() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(2)
+        .expect("workspace root");
+    let security_workflow =
+        std::fs::read_to_string(root.join(".github/workflows/security.yml")).unwrap();
+    let container_workflow =
+        std::fs::read_to_string(root.join(".github/workflows/container.yml")).unwrap();
+    let security_policy = std::fs::read_to_string(root.join("SECURITY.md")).unwrap();
+
+    assert!(root.join("deny.toml").exists());
+    assert!(security_workflow.contains("cargo audit"));
+    assert!(security_workflow.contains("cargo deny check"));
+    assert!(security_workflow.contains("cargo cyclonedx"));
+    assert!(container_workflow.contains("sbom: true"));
+    assert!(container_workflow.contains("provenance: true"));
+    assert!(security_policy.contains("Reporting a Vulnerability"));
+}

@@ -292,6 +292,11 @@ just setup-models
 ## Container Releases
 
 The `Container` GitHub Actions workflow publishes `ghcr.io/agent-axiom/aximo` on pushes to `main`, semantic version tags such as `v0.1.0`, and manual dispatch. Tags include branch, semver, major/minor, and git SHA variants. The image intentionally does not include model files; mount a model directory and provide `AXIMO_CONFIG` as shown in the Docker Compose example.
+Container builds request BuildKit SBOM and provenance attestations.
+
+## Security
+
+Security reporting is documented in [SECURITY.md](SECURITY.md). The `Security` GitHub Actions workflow runs `cargo audit`, `cargo deny check`, and CycloneDX SBOM generation.
 
 ## crates.io
 
