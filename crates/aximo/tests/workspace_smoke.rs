@@ -86,8 +86,8 @@ fn workspace_exposes_kubernetes_manifests() {
         .ancestors()
         .nth(2)
         .expect("workspace root");
-    let deployment = std::fs::read_to_string(root.join("deploy/kubernetes/deployment.yaml"))
-        .unwrap();
+    let deployment =
+        std::fs::read_to_string(root.join("deploy/kubernetes/deployment.yaml")).unwrap();
     let docs = std::fs::read_to_string(root.join("docs/kubernetes.md")).unwrap();
 
     assert!(root.join("deploy/kubernetes/kustomization.yaml").exists());
