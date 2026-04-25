@@ -1035,6 +1035,84 @@ async fn transcription_endpoint_fail_fast_allows_probe_after_cooldown() {
 }
 
 #[tokio::test]
+async fn malformed_recovery_probe_consumes_half_open_window_without_inference() {
+    let mut settings = aximo::config::Settings::default();
+    settings.limits.runtime_degrade_after_consecutive_failures = 1;
+    settings.limits.runtime_degraded_policy =
+        aximo::config::RuntimeDegradedPolicy::FailFastInference;
+    settings.limits.runtime_degraded_recovery_cooldown_ms = 10;
+    let (engine, call_count) = RecoveringEngine::new();
+    let app = aximo::app::build_app(
+        settings,
+        Arc::new(engine),
+        Arc::new(aximo_inference::engine::FakeEngine),
+    );
+
+    let first_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/transcriptions")
+                .header("content-type", "audio/wav")
+                .body(Body::from(fixture_bytes("tone-16k-mono.wav")))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(first_response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(call_count.load(Ordering::SeqCst), 1);
+
+    tokio::time::sleep(Duration::from_millis(15)).await;
+
+    let malformed_probe = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/transcriptions")
+                .header("content-type", "application/json")
+                .body(Body::from(br#"{"not":"audio"}"#.to_vec()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(malformed_probe.status(), StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    assert_eq!(call_count.load(Ordering::SeqCst), 1);
+
+    let immediate_retry = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/transcriptions")
+                .header("content-type", "audio/wav")
+                .body(Body::from(fixture_bytes("tone-16k-mono.wav")))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(immediate_retry.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(call_count.load(Ordering::SeqCst), 1);
+
+    tokio::time::sleep(Duration::from_millis(15)).await;
+
+    let recovered_probe = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/transcriptions")
+                .header("content-type", "audio/wav")
+                .body(Body::from(fixture_bytes("tone-16k-mono.wav")))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(recovered_probe.status(), StatusCode::OK);
+    assert_eq!(call_count.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
 async fn transcription_endpoint_rejects_degraded_before_reading_body() {
     let mut settings = aximo::config::Settings::default();
     settings.limits.runtime_degrade_after_consecutive_failures = 1;

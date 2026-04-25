@@ -148,6 +148,14 @@ impl RuntimeHealth {
         }
     }
 
+    pub fn finish_recovery_probe_without_inference(&self, component: &str) {
+        let mut state = self.inner.lock().expect("runtime health lock");
+        if let Some(component) = state.components.get_mut(component) {
+            component.last_failure_at = Some(Instant::now());
+            component.recovery_probe_in_flight = false;
+        }
+    }
+
     fn component_readiness(&self, component: &str, state: &ComponentState) -> ComponentReadiness {
         let degraded = self.is_degraded(state);
 
@@ -274,6 +282,28 @@ mod tests {
         assert_eq!(
             health.admit_component("short:parakeet"),
             ComponentAdmission::Rejected
+        );
+    }
+
+    #[test]
+    fn no_inference_recovery_probe_consumes_cooldown_without_changing_reason() {
+        let health = RuntimeHealth::with_recovery_cooldown(1, Duration::from_millis(5));
+
+        health.record_failure("short:parakeet", "runtime failure");
+        std::thread::sleep(Duration::from_millis(10));
+        assert_eq!(
+            health.admit_component("short:parakeet"),
+            ComponentAdmission::RecoveryProbe
+        );
+
+        health.finish_recovery_probe_without_inference("short:parakeet");
+        assert_eq!(
+            health.admit_component("short:parakeet"),
+            ComponentAdmission::Rejected
+        );
+        assert_eq!(
+            health.readiness().components[0].reason.as_deref(),
+            Some("runtime failure")
         );
     }
 }

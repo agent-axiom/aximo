@@ -14,7 +14,10 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use std::{
-    sync::Arc,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
     time::{Duration, Instant},
 };
 use tokio::sync::OwnedSemaphorePermit;
@@ -39,6 +42,26 @@ pub struct HttpError {
 #[derive(Clone)]
 pub struct ShortAudioAdmission {
     _request_permit: Arc<OwnedSemaphorePermit>,
+    recovery_probe_component: Option<String>,
+    inference_attempted: Arc<AtomicBool>,
+}
+
+impl ShortAudioAdmission {
+    fn new(request_permit: OwnedSemaphorePermit, recovery_probe_component: Option<String>) -> Self {
+        Self {
+            _request_permit: Arc::new(request_permit),
+            recovery_probe_component,
+            inference_attempted: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    fn mark_inference_attempted(&self) {
+        self.inference_attempted.store(true, Ordering::SeqCst);
+    }
+
+    fn inference_attempted(&self) -> bool {
+        self.inference_attempted.load(Ordering::SeqCst)
+    }
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -110,20 +133,28 @@ pub async fn admit_short_audio_request(
             return error.into_response();
         }
     };
-    request.extensions_mut().insert(ShortAudioAdmission {
-        _request_permit: Arc::new(request_permit),
-    });
+    let admission = ShortAudioAdmission::new(request_permit, recovery_probe_component.clone());
+    request.extensions_mut().insert(admission.clone());
 
     let response = next.run(request).await;
-    if let Some(component) = recovery_probe_component {
-        state.runtime_health.cancel_recovery_probe(&component);
+    if let Some(component) = admission.recovery_probe_component.as_deref() {
+        if !admission.inference_attempted()
+            && response.status().is_client_error()
+            && response.status() != StatusCode::TOO_MANY_REQUESTS
+        {
+            state
+                .runtime_health
+                .finish_recovery_probe_without_inference(component);
+        } else {
+            state.runtime_health.cancel_recovery_probe(component);
+        }
     }
     response
 }
 
 pub async fn transcribe_short(
     State(state): State<AppState>,
-    Extension(_admission): Extension<ShortAudioAdmission>,
+    Extension(admission): Extension<ShortAudioAdmission>,
     query: Result<Query<TranscriptionOptions>, QueryRejection>,
     headers: HeaderMap,
     body: Result<Bytes, BytesRejection>,
@@ -198,6 +229,7 @@ pub async fn transcribe_short(
             )
         })
         .inspect_err(|error| record_http_error(&state, error))?;
+    admission.mark_inference_attempted();
     let inference_started_at = Instant::now();
     let result = run_observed_blocking_inference_with_timeout(
         state.offline_engine.clone(),

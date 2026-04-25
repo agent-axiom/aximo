@@ -47,10 +47,52 @@ fn workspace_docs_keep_transcription_query_examples_valid() {
         .expect("workspace root");
     let readme = std::fs::read_to_string(root.join("README.md")).unwrap();
     let architecture = std::fs::read_to_string(root.join("docs/architecture.md")).unwrap();
+    let benchmark = std::fs::read_to_string(root.join("scripts/benchmark-api.sh")).unwrap();
+    let typo = ["×", "tamps"].concat();
 
     assert!(readme.contains("language=ru&timestamps=true"));
-    assert!(!readme.contains("×tamps"));
-    assert!(!architecture.contains("×tamps"));
+    assert!(benchmark.contains(r#"engine=${engine}&timestamps=${TIMESTAMPS}"#));
+    assert!(!readme.contains(&typo));
+    assert!(!architecture.contains(&typo));
+    assert!(!benchmark.contains(&typo));
+}
+
+#[test]
+fn workspace_text_artifacts_do_not_contain_timestamp_query_typo() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(2)
+        .expect("workspace root");
+    let mut files = vec![
+        root.join("README.md"),
+        root.join("scripts/benchmark-api.sh"),
+    ];
+    collect_text_files(&root.join("docs"), &mut files);
+    collect_text_files(&root.join("crates/aximo/tests"), &mut files);
+    let typo = ["×", "tamps"].concat();
+
+    for path in files {
+        let contents = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            !contents.contains(&typo),
+            "{} contains broken timestamps query spelling",
+            path.display()
+        );
+    }
+}
+
+fn collect_text_files(dir: &std::path::Path, files: &mut Vec<std::path::PathBuf>) {
+    for entry in std::fs::read_dir(dir).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_dir() {
+            collect_text_files(&path, files);
+        } else if matches!(
+            path.extension().and_then(|extension| extension.to_str()),
+            Some("md" | "rs" | "sh" | "toml" | "yaml" | "yml")
+        ) {
+            files.push(path);
+        }
+    }
 }
 
 #[test]
