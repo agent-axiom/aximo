@@ -102,6 +102,9 @@ impl Settings {
         if let Some(value) = env_parse("AXIMO_RUNTIME_DEGRADED_POLICY")? {
             self.limits.runtime_degraded_policy = value;
         }
+        if let Some(value) = env_parse("AXIMO_RUNTIME_DEGRADED_RECOVERY_COOLDOWN_MS")? {
+            self.limits.runtime_degraded_recovery_cooldown_ms = value;
+        }
 
         Ok(())
     }
@@ -169,6 +172,7 @@ pub struct LimitSettings {
     pub realtime_final_timeout_ms: u64,
     pub runtime_degrade_after_consecutive_failures: u64,
     pub runtime_degraded_policy: RuntimeDegradedPolicy,
+    pub runtime_degraded_recovery_cooldown_ms: u64,
 }
 
 impl Default for LimitSettings {
@@ -192,6 +196,7 @@ impl Default for LimitSettings {
             realtime_final_timeout_ms: 120_000,
             runtime_degrade_after_consecutive_failures: 3,
             runtime_degraded_policy: RuntimeDegradedPolicy::ReadinessOnly,
+            runtime_degraded_recovery_cooldown_ms: 30_000,
         }
     }
 }
@@ -303,6 +308,7 @@ mod tests {
         "AXIMO_REALTIME_FINAL_TIMEOUT_MS",
         "AXIMO_RUNTIME_DEGRADE_AFTER_CONSECUTIVE_FAILURES",
         "AXIMO_RUNTIME_DEGRADED_POLICY",
+        "AXIMO_RUNTIME_DEGRADED_RECOVERY_COOLDOWN_MS",
     ];
 
     fn env_lock() -> &'static Mutex<()> {
@@ -416,6 +422,7 @@ realtime_partial_timeout_ms = 2000
 realtime_final_timeout_ms = 3000
 runtime_degrade_after_consecutive_failures = 4
 runtime_degraded_policy = "readiness_only"
+runtime_degraded_recovery_cooldown_ms = 15000
 "#,
         )
         .unwrap();
@@ -445,6 +452,7 @@ runtime_degraded_policy = "readiness_only"
         std::env::set_var("AXIMO_REALTIME_FINAL_TIMEOUT_MS", "6000");
         std::env::set_var("AXIMO_RUNTIME_DEGRADE_AFTER_CONSECUTIVE_FAILURES", "7");
         std::env::set_var("AXIMO_RUNTIME_DEGRADED_POLICY", "fail_fast_inference");
+        std::env::set_var("AXIMO_RUNTIME_DEGRADED_RECOVERY_COOLDOWN_MS", "8000");
 
         let settings = Settings::load().unwrap();
 
@@ -478,6 +486,7 @@ runtime_degraded_policy = "readiness_only"
             settings.limits.runtime_degraded_policy,
             RuntimeDegradedPolicy::FailFastInference
         );
+        assert_eq!(settings.limits.runtime_degraded_recovery_cooldown_ms, 8000);
 
         clear_overlay_env();
     }

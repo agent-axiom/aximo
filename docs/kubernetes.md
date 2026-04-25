@@ -25,7 +25,7 @@ The example uses:
 - `GET /health/live` for liveness;
 - `GET /health/ready` for readiness.
 
-`runtime_degraded_policy = "readiness_only"` lets Kubernetes remove a degraded pod from Service endpoints without immediately failing direct in-flight clients. For standalone fail-fast behavior, set `AXIMO_RUNTIME_DEGRADED_POLICY=fail_fast_inference`.
+`runtime_degraded_policy = "readiness_only"` lets Kubernetes remove a degraded pod from Service endpoints without immediately failing direct in-flight clients. For standalone fail-fast behavior, set `AXIMO_RUNTIME_DEGRADED_POLICY=fail_fast_inference`. Fail-fast mode still probes recovery: after `AXIMO_RUNTIME_DEGRADED_RECOVERY_COOLDOWN_MS`, one half-open request is admitted; success clears the component, failure reopens it.
 
 ## Sizing
 

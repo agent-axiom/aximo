@@ -53,6 +53,7 @@ realtime_partial_timeout_ms = 4000
 realtime_final_timeout_ms = 95000
 runtime_degrade_after_consecutive_failures = 6
 runtime_degraded_policy = "fail_fast_inference"
+runtime_degraded_recovery_cooldown_ms = 45000
 "#,
     )
     .unwrap();
@@ -86,6 +87,7 @@ runtime_degraded_policy = "fail_fast_inference"
         settings.limits.runtime_degraded_policy,
         RuntimeDegradedPolicy::FailFastInference
     );
+    assert_eq!(settings.limits.runtime_degraded_recovery_cooldown_ms, 45000);
 }
 
 #[test]
@@ -172,6 +174,10 @@ max_realtime_sessions = 2
     assert_eq!(
         settings.limits.runtime_degrade_after_consecutive_failures,
         3
+    );
+    assert_eq!(
+        settings.limits.runtime_degraded_recovery_cooldown_ms,
+        30_000
     );
 }
 

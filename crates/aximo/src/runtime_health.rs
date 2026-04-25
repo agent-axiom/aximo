@@ -1,6 +1,7 @@
 use std::{
     collections::BTreeMap,
     sync::{Arc, Mutex},
+    time::{Duration, Instant},
 };
 
 use serde::Serialize;
@@ -9,6 +10,7 @@ use serde::Serialize;
 pub struct RuntimeHealth {
     inner: Arc<Mutex<RuntimeHealthState>>,
     degrade_after_consecutive_failures: u64,
+    recovery_cooldown: Duration,
 }
 
 #[derive(Default)]
@@ -20,6 +22,8 @@ struct RuntimeHealthState {
 struct ComponentState {
     consecutive_failures: u64,
     reason: Option<String>,
+    last_failure_at: Option<Instant>,
+    recovery_probe_in_flight: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -38,11 +42,26 @@ pub struct ComponentReadiness {
     pub reason: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ComponentAdmission {
+    Allowed,
+    RecoveryProbe,
+    Rejected,
+}
+
 impl RuntimeHealth {
     pub fn new(degrade_after_consecutive_failures: u64) -> Self {
+        Self::with_recovery_cooldown(degrade_after_consecutive_failures, Duration::from_secs(30))
+    }
+
+    pub fn with_recovery_cooldown(
+        degrade_after_consecutive_failures: u64,
+        recovery_cooldown: Duration,
+    ) -> Self {
         Self {
             inner: Arc::new(Mutex::new(RuntimeHealthState::default())),
             degrade_after_consecutive_failures,
+            recovery_cooldown,
         }
     }
 
@@ -51,6 +70,8 @@ impl RuntimeHealth {
         let component = state.components.entry(component.into()).or_default();
         component.consecutive_failures = 0;
         component.reason = None;
+        component.last_failure_at = None;
+        component.recovery_probe_in_flight = false;
     }
 
     pub fn record_failure(&self, component: impl Into<String>, reason: impl Into<String>) {
@@ -58,6 +79,8 @@ impl RuntimeHealth {
         let component = state.components.entry(component.into()).or_default();
         component.consecutive_failures = component.consecutive_failures.saturating_add(1);
         component.reason = Some(reason.into());
+        component.last_failure_at = Some(Instant::now());
+        component.recovery_probe_in_flight = false;
     }
 
     pub fn readiness(&self) -> Readiness {
@@ -96,9 +119,37 @@ impl RuntimeHealth {
             .unwrap_or(true)
     }
 
+    pub fn admit_component(&self, component: impl Into<String>) -> ComponentAdmission {
+        let mut state = self.inner.lock().expect("runtime health lock");
+        let component = state.components.entry(component.into()).or_default();
+        if !self.is_degraded(component) {
+            return ComponentAdmission::Allowed;
+        }
+
+        if self.recovery_probe_available(component) {
+            component.recovery_probe_in_flight = true;
+            return ComponentAdmission::RecoveryProbe;
+        }
+
+        ComponentAdmission::Rejected
+    }
+
+    pub fn can_admit_component(&self, component: &str) -> bool {
+        let state = self.inner.lock().expect("runtime health lock");
+        state.components.get(component).is_none_or(|component| {
+            !self.is_degraded(component) || self.recovery_probe_available(component)
+        })
+    }
+
+    pub fn cancel_recovery_probe(&self, component: &str) {
+        let mut state = self.inner.lock().expect("runtime health lock");
+        if let Some(component) = state.components.get_mut(component) {
+            component.recovery_probe_in_flight = false;
+        }
+    }
+
     fn component_readiness(&self, component: &str, state: &ComponentState) -> ComponentReadiness {
-        let degraded = self.degrade_after_consecutive_failures > 0
-            && state.consecutive_failures >= self.degrade_after_consecutive_failures;
+        let degraded = self.is_degraded(state);
 
         ComponentReadiness {
             component: component.to_string(),
@@ -106,6 +157,21 @@ impl RuntimeHealth {
             consecutive_failures: state.consecutive_failures,
             reason: if degraded { state.reason.clone() } else { None },
         }
+    }
+
+    fn is_degraded(&self, state: &ComponentState) -> bool {
+        self.degrade_after_consecutive_failures > 0
+            && state.consecutive_failures >= self.degrade_after_consecutive_failures
+    }
+
+    fn recovery_probe_available(&self, state: &ComponentState) -> bool {
+        if state.recovery_probe_in_flight {
+            return false;
+        }
+
+        state
+            .last_failure_at
+            .is_none_or(|last_failure_at| last_failure_at.elapsed() >= self.recovery_cooldown)
     }
 }
 
@@ -164,5 +230,50 @@ mod tests {
         assert_eq!(readiness.components[0].status, "ready");
         assert_eq!(readiness.components[1].component, "short:parakeet");
         assert_eq!(readiness.components[1].status, "degraded");
+    }
+
+    #[test]
+    fn degraded_component_allows_single_recovery_probe_after_cooldown() {
+        let health = RuntimeHealth::with_recovery_cooldown(1, Duration::from_millis(5));
+
+        health.record_failure("short:parakeet", "runtime failure");
+        assert_eq!(
+            health.admit_component("short:parakeet"),
+            ComponentAdmission::Rejected
+        );
+
+        std::thread::sleep(Duration::from_millis(10));
+        assert_eq!(
+            health.admit_component("short:parakeet"),
+            ComponentAdmission::RecoveryProbe
+        );
+        assert_eq!(
+            health.admit_component("short:parakeet"),
+            ComponentAdmission::Rejected
+        );
+
+        health.record_success("short:parakeet");
+        assert_eq!(
+            health.admit_component("short:parakeet"),
+            ComponentAdmission::Allowed
+        );
+    }
+
+    #[test]
+    fn failed_recovery_probe_reopens_component_until_next_cooldown() {
+        let health = RuntimeHealth::with_recovery_cooldown(1, Duration::from_millis(5));
+
+        health.record_failure("short:parakeet", "runtime failure");
+        std::thread::sleep(Duration::from_millis(10));
+        assert_eq!(
+            health.admit_component("short:parakeet"),
+            ComponentAdmission::RecoveryProbe
+        );
+
+        health.record_failure("short:parakeet", "probe failed");
+        assert_eq!(
+            health.admit_component("short:parakeet"),
+            ComponentAdmission::Rejected
+        );
     }
 }

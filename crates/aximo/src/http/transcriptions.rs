@@ -5,18 +5,24 @@ use axum::{
     body::Bytes,
     extract::{
         rejection::{BytesRejection, QueryRejection},
-        Query, State,
+        Extension, Query, Request, State,
     },
     http::{HeaderMap, StatusCode},
+    middleware::Next,
     response::{IntoResponse, Response},
     Json,
 };
 use serde::{Deserialize, Serialize};
-use std::time::{Duration, Instant};
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
+use tokio::sync::OwnedSemaphorePermit;
 
 use crate::{
     app::AppState,
     inference_task::{run_observed_blocking_inference_with_timeout, BlockingInferenceError},
+    runtime_health::ComponentAdmission,
 };
 
 #[derive(Debug, Serialize)]
@@ -28,6 +34,11 @@ pub struct ErrorResponseBody {
 pub struct HttpError {
     status: StatusCode,
     body: ErrorResponseBody,
+}
+
+#[derive(Clone)]
+pub struct ShortAudioAdmission {
+    _request_permit: Arc<OwnedSemaphorePermit>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -56,8 +67,63 @@ impl IntoResponse for HttpError {
     }
 }
 
+pub async fn admit_short_audio_request(
+    State(state): State<AppState>,
+    mut request: Request,
+    next: Next,
+) -> Response {
+    let health_component = format!("short:{}", state.offline_engine_name);
+    let mut recovery_probe_component = None;
+    if state.runtime_degraded_policy.fail_fast_inference() {
+        match state
+            .runtime_health
+            .admit_component(health_component.clone())
+        {
+            ComponentAdmission::Allowed => {}
+            ComponentAdmission::RecoveryProbe => {
+                recovery_probe_component = Some(health_component.clone());
+            }
+            ComponentAdmission::Rejected => {
+                let error = HttpError::new(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "engine_degraded",
+                    format!("speech engine degraded: {health_component} is degraded"),
+                );
+                record_http_error(&state, &error);
+                return error.into_response();
+            }
+        }
+    }
+
+    let request_permit = match state.scheduler.try_acquire_short_audio_request() {
+        Ok(permit) => permit,
+        Err(_) => {
+            if let Some(component) = recovery_probe_component {
+                state.runtime_health.cancel_recovery_probe(&component);
+            }
+            let error = HttpError::new(
+                StatusCode::TOO_MANY_REQUESTS,
+                "short_audio_request_capacity_exhausted",
+                "short-audio request capacity exhausted",
+            );
+            record_http_error(&state, &error);
+            return error.into_response();
+        }
+    };
+    request.extensions_mut().insert(ShortAudioAdmission {
+        _request_permit: Arc::new(request_permit),
+    });
+
+    let response = next.run(request).await;
+    if let Some(component) = recovery_probe_component {
+        state.runtime_health.cancel_recovery_probe(&component);
+    }
+    response
+}
+
 pub async fn transcribe_short(
     State(state): State<AppState>,
+    Extension(_admission): Extension<ShortAudioAdmission>,
     query: Result<Query<TranscriptionOptions>, QueryRejection>,
     headers: HeaderMap,
     body: Result<Bytes, BytesRejection>,
@@ -71,30 +137,6 @@ pub async fn transcribe_short(
         .map_err(map_body_rejection)
         .inspect_err(|error| record_http_error(&state, error))?;
     state.metrics.record_audio_body_bytes(body.len());
-
-    if state.runtime_degraded_policy.fail_fast_inference()
-        && !state.runtime_health.is_component_ready(&health_component)
-    {
-        let error = HttpError::new(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "engine_degraded",
-            format!("speech engine degraded: {health_component} is degraded"),
-        );
-        record_http_error(&state, &error);
-        return Err(error);
-    }
-
-    let _request_permit = state
-        .scheduler
-        .try_acquire_short_audio_request()
-        .map_err(|_| {
-            HttpError::new(
-                StatusCode::TOO_MANY_REQUESTS,
-                "short_audio_request_capacity_exhausted",
-                "short-audio request capacity exhausted",
-            )
-        })
-        .inspect_err(|error| record_http_error(&state, error))?;
 
     let content_type = headers
         .get(axum::http::header::CONTENT_TYPE)

@@ -156,6 +156,37 @@ struct SlowEngine {
     sleep_for: Duration,
 }
 
+struct RecoveringRealtimeEngine {
+    call_count: AtomicUsize,
+}
+
+impl RecoveringRealtimeEngine {
+    fn new() -> Self {
+        Self {
+            call_count: AtomicUsize::new(0),
+        }
+    }
+}
+
+impl aximo_inference::engine::SpeechEngine for RecoveringRealtimeEngine {
+    fn transcribe_short(
+        &self,
+        _request: aximo_core::ShortAudioRequest,
+    ) -> Result<aximo_core::ShortAudioResult, aximo_inference::engine::InferenceError> {
+        let call_index = self.call_count.fetch_add(1, Ordering::SeqCst);
+        if call_index == 0 {
+            return Err(aximo_inference::engine::InferenceError::Runtime(
+                "transient realtime failure".to_string(),
+            ));
+        }
+
+        Ok(aximo_core::ShortAudioResult::new(
+            "recovered",
+            "recovering-realtime",
+        ))
+    }
+}
+
 impl aximo_inference::engine::SpeechEngine for SlowEngine {
     fn transcribe_short(
         &self,
@@ -641,6 +672,68 @@ async fn websocket_start_fails_fast_when_realtime_engine_is_degraded() {
         second_error["reason"],
         "speech engine degraded: realtime engine parakeet is degraded"
     );
+
+    server.abort();
+}
+
+#[tokio::test]
+async fn websocket_start_allows_recovery_probe_after_cooldown() {
+    let mut settings = aximo::config::Settings::default();
+    settings.limits.runtime_degrade_after_consecutive_failures = 1;
+    settings.limits.runtime_degraded_policy =
+        aximo::config::RuntimeDegradedPolicy::FailFastInference;
+    settings.limits.runtime_degraded_recovery_cooldown_ms = 10;
+    let app = aximo::app::build_app(
+        settings,
+        Arc::new(aximo_inference::engine::FakeEngine),
+        Arc::new(RecoveringRealtimeEngine::new()),
+    );
+    let (url, server) = spawn_server_with_app(app).await;
+    let (mut first_socket, _) = connect_async(url.clone()).await.unwrap();
+
+    first_socket
+        .send(Message::Text(r#"{"event":"start"}"#.into()))
+        .await
+        .unwrap();
+    first_socket
+        .send(Message::Text(r#"{"event":"stop"}"#.into()))
+        .await
+        .unwrap();
+    assert_eq!(
+        next_event(&mut first_socket).await["event"],
+        "session_started"
+    );
+    let first_error = next_event(&mut first_socket).await;
+    assert_eq!(first_error["event"], "error");
+    assert_eq!(first_error["code"], "inference_failed");
+
+    let (mut rejected_socket, _) = connect_async(url.clone()).await.unwrap();
+    rejected_socket
+        .send(Message::Text(r#"{"event":"start"}"#.into()))
+        .await
+        .unwrap();
+    let rejected = next_event(&mut rejected_socket).await;
+    assert_eq!(rejected["event"], "error");
+    assert_eq!(rejected["code"], "engine_degraded");
+
+    sleep(Duration::from_millis(15)).await;
+
+    let (mut probe_socket, _) = connect_async(url).await.unwrap();
+    probe_socket
+        .send(Message::Text(r#"{"event":"start"}"#.into()))
+        .await
+        .unwrap();
+    probe_socket
+        .send(Message::Text(r#"{"event":"stop"}"#.into()))
+        .await
+        .unwrap();
+    assert_eq!(
+        next_event(&mut probe_socket).await["event"],
+        "session_started"
+    );
+    let final_event = next_event(&mut probe_socket).await;
+    assert_eq!(final_event["event"], "final");
+    assert_eq!(final_event["text"], "recovered");
 
     server.abort();
 }

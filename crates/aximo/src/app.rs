@@ -3,7 +3,7 @@ use std::sync::Arc;
 use aximo_audio::ShortAudioLimits;
 use aximo_core::{RealtimePartialLimits, RealtimeSessionLimits, Scheduler, SessionManager};
 use aximo_inference::engine::{FakeEngine, SpeechEngine};
-use axum::{extract::DefaultBodyLimit, Router};
+use axum::{extract::DefaultBodyLimit, middleware, Router};
 use tokio::sync::watch;
 
 use crate::{
@@ -137,12 +137,14 @@ fn build_app_with_shutdown_handle(
             settings.limits.realtime_final_timeout_ms,
         ),
         metrics: Metrics::default(),
-        runtime_health: RuntimeHealth::new(
+        runtime_health: RuntimeHealth::with_recovery_cooldown(
             settings.limits.runtime_degrade_after_consecutive_failures,
+            std::time::Duration::from_millis(settings.limits.runtime_degraded_recovery_cooldown_ms),
         ),
         runtime_degraded_policy: settings.limits.runtime_degraded_policy,
         shutdown,
     };
+    let short_admission_state = state.clone();
 
     Router::new()
         .route("/health/live", axum::routing::get(http::health::live))
@@ -150,7 +152,11 @@ fn build_app_with_shutdown_handle(
         .route(
             "/v1/transcriptions",
             axum::routing::post(http::transcriptions::transcribe_short)
-                .layer(DefaultBodyLimit::max(short_audio_body_limit)),
+                .layer(DefaultBodyLimit::max(short_audio_body_limit))
+                .layer(middleware::from_fn_with_state(
+                    short_admission_state,
+                    http::transcriptions::admit_short_audio_request,
+                )),
         )
         .route(
             "/v1/realtime",

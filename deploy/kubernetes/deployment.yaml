@@ -31,6 +31,8 @@ spec:
               value: /etc/aximo/aximo.toml
             - name: AXIMO_RUNTIME_DEGRADED_POLICY
               value: readiness_only
+            - name: AXIMO_RUNTIME_DEGRADED_RECOVERY_COOLDOWN_MS
+              value: "30000"
             - name: RUST_LOG
               value: info,ort=warn
             - name: ORT_LOG

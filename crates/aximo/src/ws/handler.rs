@@ -59,6 +59,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
         }
     });
     let mut active_session_id: Option<String> = None;
+    let mut active_health_admission: Option<RealtimeHealthAdmission> = None;
     let mut shutdown = state.shutdown.subscribe();
 
     loop {
@@ -99,10 +100,13 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                             continue;
                         }
 
-                        if let Some(reason) = realtime_engine_degraded_reason(&state) {
-                            queue_or_break!(ServerEvent::error("engine_degraded", reason),);
-                            continue;
-                        }
+                        let health_admission = match admit_realtime_engine(&state) {
+                            Ok(admission) => admission,
+                            Err(reason) => {
+                                queue_or_break!(ServerEvent::error("engine_degraded", reason),);
+                                continue;
+                            }
+                        };
 
                         match state.scheduler.try_acquire_realtime_session() {
                             Ok(permit) => {
@@ -111,9 +115,11 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                                     .start_session(permit, state.realtime_session_limits);
                                 state.metrics.inc_ws_sessions_active();
                                 active_session_id = Some(session_id.clone());
+                                active_health_admission = Some(health_admission);
                                 queue_or_break!(ServerEvent::session_started(session_id));
                             }
                             Err(_) => {
+                                health_admission.cancel(&state);
                                 queue_or_break!(ServerEvent::error(
                                     "realtime_capacity_exhausted",
                                     "realtime session capacity exhausted",
@@ -183,6 +189,9 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                                     ),);
                                 }
                             }
+                            if let Some(health_admission) = active_health_admission.take() {
+                                health_admission.cancel(&state);
+                            }
                         } else {
                             queue_or_break!(ServerEvent::error(
                                 "no_active_session",
@@ -225,14 +234,22 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                             }
                         }
                         Err(SessionError::SessionTooLarge) => {
-                            cleanup_active_session(&state, &mut active_session_id);
+                            cleanup_active_session(
+                                &state,
+                                &mut active_session_id,
+                                &mut active_health_admission,
+                            );
                             queue_or_break!(ServerEvent::error(
                                 "realtime_session_too_large",
                                 "realtime session exceeded configured byte limit",
                             ),);
                         }
                         Err(SessionError::SessionTooLong) => {
-                            cleanup_active_session(&state, &mut active_session_id);
+                            cleanup_active_session(
+                                &state,
+                                &mut active_session_id,
+                                &mut active_health_admission,
+                            );
                             queue_or_break!(ServerEvent::error(
                                 "realtime_session_too_long",
                                 "realtime session exceeded configured duration limit",
@@ -257,7 +274,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
         }
     }
 
-    cleanup_active_session(&state, &mut active_session_id);
+    cleanup_active_session(&state, &mut active_session_id, &mut active_health_admission);
     let _ = close_tx.send(());
     drop(event_tx);
     tokio::select! {
@@ -446,28 +463,59 @@ fn record_inference_health(
     }
 }
 
-fn realtime_engine_degraded_reason(state: &AppState) -> Option<String> {
-    if !state.runtime_degraded_policy.fail_fast_inference() {
-        return None;
-    }
-
-    let partial_component = format!("realtime_partial:{}", state.realtime_engine_name);
-    let final_component = format!("realtime_final:{}", state.realtime_engine_name);
-    (!state.runtime_health.is_component_ready(&partial_component)
-        || !state.runtime_health.is_component_ready(&final_component))
-    .then(|| {
-        format!(
-            "speech engine degraded: realtime engine {} is degraded",
-            state.realtime_engine_name
-        )
-    })
+#[derive(Default)]
+struct RealtimeHealthAdmission {
+    recovery_probe_components: Vec<String>,
 }
 
-fn cleanup_active_session(state: &AppState, active_session_id: &mut Option<String>) {
+impl RealtimeHealthAdmission {
+    fn cancel(self, state: &AppState) {
+        for component in self.recovery_probe_components {
+            state.runtime_health.cancel_recovery_probe(&component);
+        }
+    }
+}
+
+fn admit_realtime_engine(state: &AppState) -> Result<RealtimeHealthAdmission, String> {
+    let mut admission = RealtimeHealthAdmission::default();
+    if !state.runtime_degraded_policy.fail_fast_inference() {
+        return Ok(admission);
+    }
+
+    for component in [
+        format!("realtime_partial:{}", state.realtime_engine_name),
+        format!("realtime_final:{}", state.realtime_engine_name),
+    ] {
+        match state.runtime_health.admit_component(component.clone()) {
+            crate::runtime_health::ComponentAdmission::Allowed => {}
+            crate::runtime_health::ComponentAdmission::RecoveryProbe => {
+                admission.recovery_probe_components.push(component);
+            }
+            crate::runtime_health::ComponentAdmission::Rejected => {
+                admission.cancel(state);
+                return Err(format!(
+                    "speech engine degraded: realtime engine {} is degraded",
+                    state.realtime_engine_name
+                ));
+            }
+        }
+    }
+
+    Ok(admission)
+}
+
+fn cleanup_active_session(
+    state: &AppState,
+    active_session_id: &mut Option<String>,
+    active_health_admission: &mut Option<RealtimeHealthAdmission>,
+) {
     if let Some(session_id) = active_session_id.take() {
         if state.session_manager.finish_session(&session_id).is_ok() {
             state.metrics.dec_ws_sessions_active();
         }
+    }
+    if let Some(health_admission) = active_health_admission.take() {
+        health_admission.cancel(state);
     }
 }
 
