@@ -19,6 +19,9 @@ setup-models:
 benchmark-api:
     ./scripts/benchmark-api.sh
 
+benchmark-report:
+    ./scripts/render-benchmark-report.sh
+
 package-libs:
     cargo package -p aximo-core --allow-dirty
     cargo package -p aximo-audio --allow-dirty

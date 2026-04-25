@@ -117,10 +117,13 @@ fn workspace_exposes_benchmark_suite() {
     let docs = std::fs::read_to_string(root.join("docs/benchmarks.md")).unwrap();
 
     assert!(root.join("scripts/benchmark-api.sh").exists());
+    assert!(root.join("scripts/render-benchmark-report.sh").exists());
     assert!(justfile.contains("benchmark-api:"));
+    assert!(justfile.contains("benchmark-report:"));
     assert!(docs.contains("RTF"));
     assert!(docs.contains("WER"));
     assert!(docs.contains("AXIMO_BENCH_FIXTURES_DIR"));
+    assert!(docs.contains("benchmark-report.md"));
     assert!(docs.contains("Parakeet"));
     assert!(docs.contains("GigaAM"));
 }

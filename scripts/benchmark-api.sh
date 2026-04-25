@@ -3,6 +3,7 @@ set -euo pipefail
 
 BASE_URL="${AXIMO_BENCH_BASE_URL:-http://127.0.0.1:8080}"
 OUT_DIR="${AXIMO_BENCH_OUT_DIR:-target/aximo-benchmarks}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENGINES="${AXIMO_BENCH_ENGINES:-parakeet}"
 FORMATS="${AXIMO_BENCH_FORMATS:-wav}"
 DURATIONS="${AXIMO_BENCH_DURATIONS:-5 30 60}"
@@ -17,6 +18,7 @@ mkdir -p "$OUT_DIR/audio" "$OUT_DIR/responses"
 
 CSV="$OUT_DIR/results.csv"
 SUMMARY="$OUT_DIR/summary.txt"
+REPORT="${AXIMO_BENCH_REPORT:-$OUT_DIR/benchmark-report.md}"
 
 cat > "$CSV" <<'CSV'
 timestamp,engine,format,duration_s,sample,run,http_status,latency_ms,processing_ms,duration_ms,rtf,text_chars,expected_chars,wer,cer,error_code
@@ -323,4 +325,9 @@ summary_path.write_text("\n".join(lines) + "\n")
 print(summary_path.read_text())
 PY
 
-echo "Wrote ${CSV} and ${SUMMARY}"
+AXIMO_BENCH_RESULTS_CSV="$CSV" \
+    AXIMO_BENCH_SUMMARY="$SUMMARY" \
+    AXIMO_BENCH_REPORT="$REPORT" \
+    "$SCRIPT_DIR/render-benchmark-report.sh"
+
+echo "Wrote ${CSV}, ${SUMMARY}, and ${REPORT}"

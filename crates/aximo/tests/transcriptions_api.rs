@@ -148,6 +148,10 @@ struct RecoveringEngine {
     call_count: Arc<AtomicUsize>,
 }
 
+struct FailsTwiceThenRecoversEngine {
+    call_count: Arc<AtomicUsize>,
+}
+
 impl CountingRuntimeErrorEngine {
     fn new() -> (Self, Arc<AtomicUsize>) {
         let call_count = Arc::new(AtomicUsize::new(0));
@@ -161,6 +165,18 @@ impl CountingRuntimeErrorEngine {
 }
 
 impl RecoveringEngine {
+    fn new() -> (Self, Arc<AtomicUsize>) {
+        let call_count = Arc::new(AtomicUsize::new(0));
+        (
+            Self {
+                call_count: Arc::clone(&call_count),
+            },
+            call_count,
+        )
+    }
+}
+
+impl FailsTwiceThenRecoversEngine {
     fn new() -> (Self, Arc<AtomicUsize>) {
         let call_count = Arc::new(AtomicUsize::new(0));
         (
@@ -197,6 +213,25 @@ impl aximo_inference::engine::SpeechEngine for RecoveringEngine {
         }
 
         Ok(aximo_core::ShortAudioResult::new("recovered", "recovering"))
+    }
+}
+
+impl aximo_inference::engine::SpeechEngine for FailsTwiceThenRecoversEngine {
+    fn transcribe_short(
+        &self,
+        _request: aximo_core::ShortAudioRequest,
+    ) -> Result<aximo_core::ShortAudioResult, aximo_inference::engine::InferenceError> {
+        let call_index = self.call_count.fetch_add(1, Ordering::SeqCst);
+        if call_index < 2 {
+            return Err(aximo_inference::engine::InferenceError::Runtime(format!(
+                "transient failure {call_index}"
+            )));
+        }
+
+        Ok(aximo_core::ShortAudioResult::new(
+            "recovered",
+            "fails-twice",
+        ))
     }
 }
 
@@ -1032,6 +1067,123 @@ async fn transcription_endpoint_fail_fast_allows_probe_after_cooldown() {
         .unwrap();
     assert_eq!(ready_response.status(), StatusCode::OK);
     assert_eq!(call_count.load(Ordering::SeqCst), 3);
+}
+
+#[tokio::test]
+async fn failed_recovery_probe_reopens_until_next_cooldown() {
+    let mut settings = aximo::config::Settings::default();
+    settings.limits.runtime_degrade_after_consecutive_failures = 1;
+    settings.limits.runtime_degraded_policy =
+        aximo::config::RuntimeDegradedPolicy::FailFastInference;
+    settings.limits.runtime_degraded_recovery_cooldown_ms = 10;
+    let (engine, call_count) = FailsTwiceThenRecoversEngine::new();
+    let app = aximo::app::build_app(
+        settings,
+        Arc::new(engine),
+        Arc::new(aximo_inference::engine::FakeEngine),
+    );
+
+    let first_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/transcriptions")
+                .header("content-type", "audio/wav")
+                .body(Body::from(fixture_bytes("tone-16k-mono.wav")))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(first_response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(call_count.load(Ordering::SeqCst), 1);
+
+    let fast_rejected_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/transcriptions")
+                .header("content-type", "audio/wav")
+                .body(Body::from(fixture_bytes("tone-16k-mono.wav")))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        fast_rejected_response.status(),
+        StatusCode::SERVICE_UNAVAILABLE
+    );
+    assert_eq!(call_count.load(Ordering::SeqCst), 1);
+
+    tokio::time::sleep(Duration::from_millis(15)).await;
+
+    let failed_probe_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/transcriptions")
+                .header("content-type", "audio/wav")
+                .body(Body::from(fixture_bytes("tone-16k-mono.wav")))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        failed_probe_response.status(),
+        StatusCode::INTERNAL_SERVER_ERROR
+    );
+    assert_eq!(call_count.load(Ordering::SeqCst), 2);
+
+    let rejected_after_failed_probe = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/transcriptions")
+                .header("content-type", "audio/wav")
+                .body(Body::from(fixture_bytes("tone-16k-mono.wav")))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        rejected_after_failed_probe.status(),
+        StatusCode::SERVICE_UNAVAILABLE
+    );
+    assert_eq!(call_count.load(Ordering::SeqCst), 2);
+
+    tokio::time::sleep(Duration::from_millis(15)).await;
+
+    let recovered_probe_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/transcriptions")
+                .header("content-type", "audio/wav")
+                .body(Body::from(fixture_bytes("tone-16k-mono.wav")))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(recovered_probe_response.status(), StatusCode::OK);
+    assert_eq!(call_count.load(Ordering::SeqCst), 3);
+
+    let ready_response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/transcriptions")
+                .header("content-type", "audio/wav")
+                .body(Body::from(fixture_bytes("tone-16k-mono.wav")))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(ready_response.status(), StatusCode::OK);
+    assert_eq!(call_count.load(Ordering::SeqCst), 4);
 }
 
 #[tokio::test]

@@ -16,7 +16,7 @@ Then run the benchmark client from another shell:
 just benchmark-api
 ```
 
-By default the script benchmarks the configured Parakeet service with generated 5s, 30s, and 60s WAV tones. Results are written to `target/aximo-benchmarks/results.csv` and summarized in `target/aximo-benchmarks/summary.txt`.
+By default the script benchmarks the configured Parakeet service with generated 5s, 30s, and 60s WAV tones. Results are written to `target/aximo-benchmarks/results.csv`, summarized in `target/aximo-benchmarks/summary.txt`, and rendered as `target/aximo-benchmarks/benchmark-report.md`.
 
 The generated tone path is only a mechanics smoke test for decode overhead, latency, and RTF. To measure recognition quality, point the harness at real speech fixtures and provide `.txt` transcripts with matching basenames:
 
@@ -53,6 +53,22 @@ just benchmark-api
 ```
 
 `mp3`, `m4a`, and `flac` benchmarks require `ffmpeg`; the default `wav` path only uses Python standard-library audio generation.
+
+## Report
+
+`just benchmark-api` renders a Markdown report automatically. If you already have a `results.csv` and `summary.txt`, regenerate only the report:
+
+```bash
+AXIMO_BENCH_RESULTS_CSV=target/aximo-benchmarks/results.csv \
+AXIMO_BENCH_SUMMARY=target/aximo-benchmarks/summary.txt \
+AXIMO_BENCH_REPORT=target/aximo-benchmarks/benchmark-report.md \
+AXIMO_BENCH_FIXTURE_SET="ru/en clean+noisy speech v1" \
+AXIMO_BENCH_MODEL_SET="parakeet v3 CPU" \
+AXIMO_BENCH_HOST_INFO="8 vCPU, 16 GiB RAM" \
+just benchmark-report
+```
+
+The report intentionally records fixture/model/host metadata instead of checking in synthetic baseline numbers. Publishable baseline results should be produced from real RU/EN speech fixtures, mounted production models, and the CPU/RAM limits used by the target deployment.
 
 ## Parakeet And GigaAM
 
