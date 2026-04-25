@@ -108,6 +108,7 @@ AXIMO_REALTIME_PARTIAL_TIMEOUT_MS=5000
 AXIMO_REALTIME_FINAL_TIMEOUT_MS=120000
 AXIMO_RUNTIME_DEGRADE_AFTER_CONSECUTIVE_FAILURES=3
 AXIMO_RUNTIME_DEGRADED_POLICY=readiness_only
+AXIMO_RUNTIME_DEGRADED_RECOVERY_COOLDOWN_MS=30000
 ```
 
 ## Short Audio Example
@@ -262,10 +263,11 @@ If container logs include `onnxruntime cpuid_info warning: Unknown CPU vendor`, 
 - `aximo_ws_queue_overflows_total`
 - `aximo_realtime_partial_coalesced_total`
 - `aximo_realtime_stale_partial_skips_total`
+- `aximo_model_execution_wait_timeouts_total`
 
 Latency and RTF metrics are emitted as Prometheus histograms, so dashboards can use `histogram_quantile()` for p95/p99 without depending only on averages.
 
-`/health/live` is process liveness. `/health/ready` reports aggregate readiness and per-component details such as `short:parakeet`, `realtime_partial:parakeet`, and `realtime_final:parakeet`. It returns `503` with a JSON `degraded` status after consecutive timeout/runtime/unavailable inference failures for any component reach `runtime_degrade_after_consecutive_failures`. A successful inference clears only its own component state. `runtime_degraded_policy = "readiness_only"` only signals orchestrators through readiness; `runtime_degraded_policy = "fail_fast_inference"` additionally rejects new inference work for degraded components with `engine_degraded`.
+`/health/live` is process liveness. `/health/ready` reports aggregate readiness and per-component details such as `short:parakeet`, `realtime_partial:parakeet`, and `realtime_final:parakeet`. It returns `503` with a JSON `degraded` status after consecutive timeout/runtime/unavailable inference failures for any component reach `runtime_degrade_after_consecutive_failures`. A successful inference clears only its own component state. `runtime_degraded_policy = "readiness_only"` only signals orchestrators through readiness; `runtime_degraded_policy = "fail_fast_inference"` additionally rejects new inference work for degraded components with `engine_degraded`, then allows one half-open recovery probe after `runtime_degraded_recovery_cooldown_ms`.
 
 On SIGINT or SIGTERM, Aximo notifies active websocket handlers, sends close frames, stops accepting new connections through axum graceful shutdown, and waits up to `shutdown_grace_period_ms`.
 

@@ -1,4 +1,10 @@
-use std::time::Duration;
+use std::{
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+    time::Duration,
+};
 
 use aximo_core::{ShortAudioRequest, ShortAudioResult};
 use aximo_inference::engine::InferenceError;
@@ -87,9 +93,12 @@ async fn run_blocking_inference_with_timeout_inner(
 ) -> Result<ShortAudioResult, BlockingInferenceError> {
     let timeout_ms = timeout_duration.as_millis().try_into().unwrap_or(u64::MAX);
     let timeout_observer = observer.clone();
+    let model_wait_started_at = std::time::Instant::now();
+    let execution_permit_acquired = Arc::new(AtomicBool::new(false));
+    let timeout_execution_permit_acquired = Arc::clone(&execution_permit_acquired);
     let task = async move {
-        let model_wait_started_at = std::time::Instant::now();
         let permit = runtime.acquire_execution_permit().await;
+        execution_permit_acquired.store(true, Ordering::SeqCst);
         if let Some(observer) = &observer {
             observer
                 .metrics
@@ -115,6 +124,15 @@ async fn run_blocking_inference_with_timeout_inner(
         Ok(result) => result,
         Err(_) => {
             if let Some(observer) = timeout_observer {
+                if !timeout_execution_permit_acquired.load(Ordering::SeqCst) {
+                    observer.metrics.record_model_execution_wait(
+                        observer.kind,
+                        model_wait_started_at.elapsed(),
+                    );
+                    observer
+                        .metrics
+                        .record_model_execution_wait_timeout(observer.kind);
+                }
                 observer.metrics.record_inference_timeout(observer.kind);
             }
             Err(BlockingInferenceError::Timeout { timeout_ms })

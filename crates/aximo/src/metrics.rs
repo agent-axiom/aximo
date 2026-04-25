@@ -41,6 +41,7 @@ struct MetricsState {
     model_execution_wait_seconds_sum: BTreeMap<&'static str, f64>,
     model_execution_wait_seconds_count: BTreeMap<&'static str, u64>,
     model_execution_wait_seconds_buckets: BTreeMap<&'static str, Vec<u64>>,
+    model_execution_wait_timeouts_total: BTreeMap<&'static str, u64>,
     inference_seconds_sum: BTreeMap<&'static str, f64>,
     inference_seconds_count: BTreeMap<&'static str, u64>,
     inference_seconds_buckets: BTreeMap<&'static str, Vec<u64>>,
@@ -150,6 +151,14 @@ impl Metrics {
             LATENCY_BUCKETS,
             elapsed.as_secs_f64(),
         );
+    }
+
+    pub fn record_model_execution_wait_timeout(&self, kind: &'static str) {
+        let mut state = self.inner.lock().expect("metrics lock");
+        *state
+            .model_execution_wait_timeouts_total
+            .entry(kind)
+            .or_default() += 1;
     }
 
     pub fn record_inference_timeout(&self, kind: &'static str) {
@@ -289,6 +298,24 @@ impl Metrics {
             &state.model_execution_wait_seconds_count,
             &state.model_execution_wait_seconds_buckets,
         );
+        writeln!(
+            output,
+            "# HELP aximo_model_execution_wait_timeouts_total Inference requests that timed out while waiting for the per-engine execution gate."
+        )
+        .expect("write metrics");
+        writeln!(
+            output,
+            "# TYPE aximo_model_execution_wait_timeouts_total counter"
+        )
+        .expect("write metrics");
+        for (kind, value) in &state.model_execution_wait_timeouts_total {
+            let kind = escape_label_value(kind);
+            writeln!(
+                output,
+                "aximo_model_execution_wait_timeouts_total{{kind=\"{kind}\"}} {value}"
+            )
+            .expect("write metrics");
+        }
         write_labelled_histogram(
             &mut output,
             "aximo_inference_seconds",

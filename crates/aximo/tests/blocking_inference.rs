@@ -139,3 +139,40 @@ async fn timed_out_blocking_inference_holds_model_gate_until_backend_returns() {
     assert!(second.await.unwrap().is_ok());
     assert_eq!(call_count.load(Ordering::SeqCst), 2);
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn timeout_while_waiting_for_model_gate_records_wait_timeout_metric() {
+    let (engine, _call_count, first_started_rx, release_first_tx) = BlockingGateEngine::new();
+    let runtime = aximo::engine_runtime::EngineRuntime::new(Arc::new(engine));
+
+    let first = tokio::spawn(aximo::inference_task::run_blocking_inference_with_timeout(
+        runtime.clone(),
+        sample_request(),
+        Duration::from_millis(10),
+    ));
+    first_started_rx.await.unwrap();
+    assert!(matches!(
+        first.await.unwrap(),
+        Err(aximo::inference_task::BlockingInferenceError::Timeout { .. })
+    ));
+
+    let metrics = aximo::metrics::Metrics::default();
+    let second = aximo::inference_task::run_observed_blocking_inference_with_timeout(
+        runtime,
+        sample_request(),
+        Duration::from_millis(10),
+        metrics.clone(),
+        "short",
+    )
+    .await;
+
+    assert!(matches!(
+        second,
+        Err(aximo::inference_task::BlockingInferenceError::Timeout { .. })
+    ));
+
+    release_first_tx.send(()).unwrap();
+    let rendered = metrics.render_prometheus();
+    assert!(rendered.contains(r#"aximo_model_execution_wait_seconds_count{kind="short"} 1"#));
+    assert!(rendered.contains(r#"aximo_model_execution_wait_timeouts_total{kind="short"} 1"#));
+}
