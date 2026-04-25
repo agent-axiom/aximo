@@ -14,7 +14,7 @@ use tokio::sync::oneshot;
 
 use crate::config::Settings;
 
-const APP_SHUTDOWN_DRAIN: Duration = Duration::from_millis(25);
+const APP_SHUTDOWN_DRAIN: Duration = Duration::from_millis(100);
 
 #[derive(Debug, Error)]
 pub enum RuntimeConfigError {

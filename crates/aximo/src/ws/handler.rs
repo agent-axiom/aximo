@@ -23,7 +23,7 @@ const REALTIME_PARTIAL_WINDOW_BYTES: usize = 160_000;
 const PCM_SAMPLE_RATE: u64 = 16_000;
 const PCM_BYTES_PER_SAMPLE: usize = 2;
 const WRITER_DRAIN_TIMEOUT: Duration = Duration::from_millis(100);
-const CLOSE_FRAME_LINGER: Duration = Duration::from_millis(25);
+const CLOSE_FRAME_LINGER: Duration = Duration::from_millis(50);
 
 pub async fn realtime_socket(
     ws: WebSocketUpgrade,

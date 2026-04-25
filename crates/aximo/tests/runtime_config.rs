@@ -258,7 +258,13 @@ async fn runtime_shutdown_drains_active_websocket_before_grace_deadline() {
     let close = tokio::time::timeout(std::time::Duration::from_secs(2), socket.next())
         .await
         .unwrap();
-    assert!(close.is_none() || close.unwrap().unwrap().is_close());
+    match close {
+        None => {}
+        Some(Ok(message)) => assert!(message.is_close()),
+        Some(Err(error)) => assert!(error
+            .to_string()
+            .contains("reset without closing handshake")),
+    }
 
     tokio::time::timeout(std::time::Duration::from_secs(2), server)
         .await
