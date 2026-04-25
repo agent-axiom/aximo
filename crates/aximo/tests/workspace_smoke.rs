@@ -63,3 +63,19 @@ fn workspace_example_config_documents_runtime_degraded_policy() {
 
     assert!(config.contains("runtime_degraded_policy = \"readiness_only\""));
 }
+
+#[test]
+fn workspace_exposes_benchmark_suite() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(2)
+        .expect("workspace root");
+    let justfile = std::fs::read_to_string(root.join("justfile")).unwrap();
+    let docs = std::fs::read_to_string(root.join("docs/benchmarks.md")).unwrap();
+
+    assert!(root.join("scripts/benchmark-api.sh").exists());
+    assert!(justfile.contains("benchmark-api:"));
+    assert!(docs.contains("RTF"));
+    assert!(docs.contains("Parakeet"));
+    assert!(docs.contains("GigaAM"));
+}

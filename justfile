@@ -16,6 +16,9 @@ coverage:
 setup-models:
     ./scripts/fetch-models.sh
 
+benchmark-api:
+    ./scripts/benchmark-api.sh
+
 package-libs:
     cargo package -p aximo-core --allow-dirty
     cargo package -p aximo-audio --allow-dirty
