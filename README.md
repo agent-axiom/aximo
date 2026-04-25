@@ -24,6 +24,8 @@ Architecture and protocol details live in:
 - [docs/client-examples.md](docs/client-examples.md)
 - [docs/realtime-protocol.md](docs/realtime-protocol.md)
 - [docs/model-licenses.md](docs/model-licenses.md)
+- [docs/benchmarks.md](docs/benchmarks.md)
+- [docs/kubernetes.md](docs/kubernetes.md)
 
 ## Models
 
@@ -273,7 +275,7 @@ On SIGINT or SIGTERM, Aximo notifies active websocket handlers, sends close fram
 - The current `transcribe-rs` ONNX adapter path returns plain text; `segments` stays empty and `detected_language` stays `null` until backend metadata is exposed.
 - Container decode now avoids an extra input-buffer copy from axum `Bytes`, but decoded samples are still materialized in memory before normalization.
 - Audio resampling is intentionally simple for MVP use; production WER/CER work should evaluate a higher-quality resampler.
-- Future hardening candidates: benchmark suite, timestamp/language support, true streaming decoder backend, cargo-audit/cargo-deny, SBOM, and k8s manifests.
+- Future hardening candidates: timestamp/language detection when backend metadata exposes it and a true incremental streaming decoder backend.
 
 ## Development
 

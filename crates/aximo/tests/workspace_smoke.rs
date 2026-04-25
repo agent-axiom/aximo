@@ -79,3 +79,23 @@ fn workspace_exposes_benchmark_suite() {
     assert!(docs.contains("Parakeet"));
     assert!(docs.contains("GigaAM"));
 }
+
+#[test]
+fn workspace_exposes_kubernetes_manifests() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(2)
+        .expect("workspace root");
+    let deployment = std::fs::read_to_string(root.join("deploy/kubernetes/deployment.yaml"))
+        .unwrap();
+    let docs = std::fs::read_to_string(root.join("docs/kubernetes.md")).unwrap();
+
+    assert!(root.join("deploy/kubernetes/kustomization.yaml").exists());
+    assert!(root.join("deploy/kubernetes/service.yaml").exists());
+    assert!(root.join("deploy/kubernetes/configmap.yaml").exists());
+    assert!(root.join("deploy/kubernetes/pvc.yaml").exists());
+    assert!(deployment.contains("readinessProbe"));
+    assert!(deployment.contains("livenessProbe"));
+    assert!(deployment.contains("AXIMO_RUNTIME_DEGRADED_POLICY"));
+    assert!(docs.contains("kubectl apply -k deploy/kubernetes"));
+}

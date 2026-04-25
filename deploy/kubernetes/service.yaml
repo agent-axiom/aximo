@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: aximo
+  labels:
+    app.kubernetes.io/name: aximo
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: aximo
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http

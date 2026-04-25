@@ -1,0 +1,73 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aximo
+  labels:
+    app.kubernetes.io/name: aximo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: aximo
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: aximo
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+      containers:
+        - name: aximo
+          image: ghcr.io/agent-axiom/aximo:main
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: AXIMO_CONFIG
+              value: /etc/aximo/aximo.toml
+            - name: AXIMO_RUNTIME_DEGRADED_POLICY
+              value: readiness_only
+            - name: RUST_LOG
+              value: info,ort=warn
+            - name: ORT_LOG
+              value: error
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: "2"
+              memory: 3Gi
+            limits:
+              cpu: "4"
+              memory: 6Gi
+          volumeMounts:
+            - name: config
+              mountPath: /etc/aximo
+              readOnly: true
+            - name: models
+              mountPath: /var/lib/aximo/models
+      volumes:
+        - name: config
+          configMap:
+            name: aximo-config
+        - name: models
+          persistentVolumeClaim:
+            claimName: aximo-models
