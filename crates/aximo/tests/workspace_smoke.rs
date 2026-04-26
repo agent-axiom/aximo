@@ -187,8 +187,10 @@ fn workspace_exposes_security_release_hardening() {
         std::fs::read_to_string(root.join(".github/workflows/container.yml")).unwrap();
     let security_policy = std::fs::read_to_string(root.join("SECURITY.md")).unwrap();
     let justfile = std::fs::read_to_string(root.join("justfile")).unwrap();
+    let deny = std::fs::read_to_string(root.join("deny.toml")).unwrap();
 
     assert!(root.join("deny.toml").exists());
+    assert!(deny.contains("CDLA-Permissive-2.0"));
     assert!(security_workflow.contains("cargo audit"));
     assert!(security_workflow.contains("cargo deny check"));
     assert!(security_workflow.contains("cargo cyclonedx"));
