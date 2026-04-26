@@ -23,6 +23,12 @@ spec:
         - name: aximo
           image: ghcr.io/agent-axiom/aximo:main
           imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: true
           ports:
             - name: http
               containerPort: 8080
@@ -66,6 +72,9 @@ spec:
               readOnly: true
             - name: models
               mountPath: /var/lib/aximo/models
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
       volumes:
         - name: config
           configMap:
@@ -73,3 +82,5 @@ spec:
         - name: models
           persistentVolumeClaim:
             claimName: aximo-models
+        - name: tmp
+          emptyDir: {}

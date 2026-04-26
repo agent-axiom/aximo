@@ -81,6 +81,19 @@ just benchmark-report
 
 The report intentionally records fixture/model/host metadata instead of checking in synthetic baseline numbers. Publishable baseline results should be produced from real RU/EN speech fixtures, mounted production models, and the CPU/RAM limits used by the target deployment.
 
+## Production benchmark acceptance
+
+A production baseline must use human speech, not synthetic tone or only macOS TTS fixtures. Minimum useful coverage:
+
+- RU and EN samples at 5s, 30s, and 60s.
+- Clean and noisy recordings.
+- WAV, MP3, M4A, and FLAC variants.
+- Multiple warm runs per sample, with p50/p95/p99 latency, RTF, peak RSS, and CPU.
+- Transcript sidecars for WER/CER.
+- The same model bundle, container image tag, CPU limits, and memory limits intended for deployment.
+
+The checked-in `docs/benchmark-baselines.md` remains a smoke baseline until a curated human-speech fixture set is available.
+
 ## Parakeet And GigaAM
 
 The HTTP endpoint validates `engine` against the service instance's configured offline engine. To compare Parakeet and GigaAM, run the service once with `default_offline_engine = "parakeet"` and once with `default_offline_engine = "gigaam"`, or run two service instances on different ports:

@@ -182,6 +182,16 @@ struct NativeStreamingSession {
     text: String,
 }
 
+struct NativeStartFailingEngine;
+
+struct NativePartialRecoveringEngine {
+    accept_calls: Arc<AtomicUsize>,
+}
+
+struct NativePartialRecoveringSession {
+    accept_calls: Arc<AtomicUsize>,
+}
+
 struct RecoveringRealtimeEngine {
     call_count: AtomicUsize,
 }
@@ -284,6 +294,109 @@ impl aximo_inference::engine::SpeechEngine for NativeStreamingEngine {
     }
 }
 
+impl aximo_inference::engine::SpeechEngine for NativeStartFailingEngine {
+    fn transcribe_short(
+        &self,
+        _request: aximo_core::ShortAudioRequest,
+    ) -> Result<aximo_core::ShortAudioResult, aximo_inference::engine::InferenceError> {
+        Ok(aximo_core::ShortAudioResult::new(
+            "offline fallback",
+            "native-start-failing",
+        ))
+    }
+
+    fn capabilities(&self) -> aximo_core::EngineCapabilities {
+        aximo_core::EngineCapabilities {
+            engine: "native-start-failing".to_string(),
+            model_name: "NativeStartFailingTest".to_string(),
+            sample_rate_hz: 16_000,
+            languages: vec!["en".to_string()],
+            supports_timestamps: false,
+            supports_language_detection: false,
+            supports_native_streaming: true,
+        }
+    }
+
+    fn start_streaming_session(
+        &self,
+    ) -> Result<
+        Box<dyn aximo_inference::engine::StreamingSpeechSession>,
+        aximo_inference::engine::InferenceError,
+    > {
+        Err(aximo_inference::engine::InferenceError::Unavailable(
+            "native stream unavailable".to_string(),
+        ))
+    }
+}
+
+impl NativePartialRecoveringEngine {
+    fn new() -> Self {
+        Self {
+            accept_calls: Arc::new(AtomicUsize::new(0)),
+        }
+    }
+}
+
+impl aximo_inference::engine::StreamingSpeechSession for NativePartialRecoveringSession {
+    fn accept_pcm_chunk(
+        &mut self,
+        _chunk: &[u8],
+    ) -> Result<Option<aximo_core::ShortAudioResult>, aximo_inference::engine::InferenceError> {
+        let call_index = self.accept_calls.fetch_add(1, Ordering::SeqCst);
+        if call_index == 0 {
+            return Err(aximo_inference::engine::InferenceError::Runtime(
+                "transient native partial failure".to_string(),
+            ));
+        }
+
+        Ok(None)
+    }
+
+    fn finish(
+        &mut self,
+    ) -> Result<aximo_core::ShortAudioResult, aximo_inference::engine::InferenceError> {
+        Ok(aximo_core::ShortAudioResult::new(
+            "native recovered",
+            "native-partial-recovering",
+        ))
+    }
+}
+
+impl aximo_inference::engine::SpeechEngine for NativePartialRecoveringEngine {
+    fn transcribe_short(
+        &self,
+        _request: aximo_core::ShortAudioRequest,
+    ) -> Result<aximo_core::ShortAudioResult, aximo_inference::engine::InferenceError> {
+        Ok(aximo_core::ShortAudioResult::new(
+            "offline fallback",
+            "native-partial-recovering",
+        ))
+    }
+
+    fn capabilities(&self) -> aximo_core::EngineCapabilities {
+        aximo_core::EngineCapabilities {
+            engine: "native-partial-recovering".to_string(),
+            model_name: "NativePartialRecoveringTest".to_string(),
+            sample_rate_hz: 16_000,
+            languages: vec!["en".to_string()],
+            supports_timestamps: false,
+            supports_language_detection: false,
+            supports_native_streaming: true,
+        }
+    }
+
+    fn start_streaming_session(
+        &self,
+    ) -> Result<
+        Box<dyn aximo_inference::engine::StreamingSpeechSession>,
+        aximo_inference::engine::InferenceError,
+    > {
+        Ok(Box::new(NativePartialRecoveringSession {
+            accept_calls: Arc::clone(&self.accept_calls),
+        }))
+    }
+}
+
 async fn spawn_test_server() -> (String, tokio::task::JoinHandle<()>) {
     let app = aximo::app::build_test_app().await;
     spawn_server_with_app(app).await
@@ -375,6 +488,115 @@ async fn websocket_uses_native_streaming_session_when_backend_supports_it() {
 
     assert_eq!(short_calls.load(Ordering::SeqCst), 0);
     assert_eq!(stream_chunks.lock().unwrap().as_slice(), &[3_200]);
+
+    server.abort();
+}
+
+#[tokio::test]
+async fn websocket_native_start_failure_degrades_stream_component() {
+    let mut settings = aximo::config::Settings::default();
+    settings.limits.runtime_degrade_after_consecutive_failures = 1;
+    settings.limits.runtime_degraded_policy =
+        aximo::config::RuntimeDegradedPolicy::FailFastInference;
+    let app = aximo::app::build_app(
+        settings,
+        Arc::new(aximo_inference::engine::FakeEngine),
+        Arc::new(NativeStartFailingEngine),
+    );
+    let (url, server) = spawn_server_with_app(app).await;
+    let (mut first_socket, _) = connect_async(url.clone()).await.unwrap();
+
+    first_socket
+        .send(Message::Text(r#"{"event":"start"}"#.into()))
+        .await
+        .unwrap();
+    let first_error = next_event(&mut first_socket).await;
+    assert_eq!(first_error["event"], "error");
+    assert_eq!(first_error["code"], "streaming_start_failed");
+
+    let (mut second_socket, _) = connect_async(url).await.unwrap();
+    second_socket
+        .send(Message::Text(r#"{"event":"start"}"#.into()))
+        .await
+        .unwrap();
+    let second_error = next_event(&mut second_socket).await;
+    assert_eq!(second_error["event"], "error");
+    assert_eq!(second_error["code"], "engine_degraded");
+
+    server.abort();
+}
+
+#[tokio::test]
+async fn websocket_native_chunk_without_partial_clears_recovery_probe() {
+    let mut settings = aximo::config::Settings::default();
+    settings.limits.realtime_partial_min_chunk_bytes = 1;
+    settings.limits.runtime_degrade_after_consecutive_failures = 1;
+    settings.limits.runtime_degraded_policy =
+        aximo::config::RuntimeDegradedPolicy::FailFastInference;
+    settings.limits.runtime_degraded_recovery_cooldown_ms = 10;
+    let app = aximo::app::build_app(
+        settings,
+        Arc::new(aximo_inference::engine::FakeEngine),
+        Arc::new(NativePartialRecoveringEngine::new()),
+    );
+    let (url, server) = spawn_server_with_app(app).await;
+    let (mut failing_socket, _) = connect_async(url.clone()).await.unwrap();
+
+    failing_socket
+        .send(Message::Text(r#"{"event":"start"}"#.into()))
+        .await
+        .unwrap();
+    assert_eq!(
+        next_event(&mut failing_socket).await["event"],
+        "session_started"
+    );
+    failing_socket
+        .send(Message::Binary(vec![0_u8; 3_200].into()))
+        .await
+        .unwrap();
+    let first_error = next_event(&mut failing_socket).await;
+    assert_eq!(first_error["event"], "error");
+    assert_eq!(first_error["code"], "inference_failed");
+
+    let (mut rejected_socket, _) = connect_async(url.clone()).await.unwrap();
+    rejected_socket
+        .send(Message::Text(r#"{"event":"start"}"#.into()))
+        .await
+        .unwrap();
+    let rejected = next_event(&mut rejected_socket).await;
+    assert_eq!(rejected["event"], "error");
+    assert_eq!(rejected["code"], "engine_degraded");
+
+    sleep(Duration::from_millis(15)).await;
+
+    let (mut probe_socket, _) = connect_async(url.clone()).await.unwrap();
+    probe_socket
+        .send(Message::Text(r#"{"event":"start"}"#.into()))
+        .await
+        .unwrap();
+    assert_eq!(
+        next_event(&mut probe_socket).await["event"],
+        "session_started"
+    );
+    probe_socket
+        .send(Message::Binary(vec![0_u8; 3_200].into()))
+        .await
+        .unwrap();
+    probe_socket
+        .send(Message::Text(r#"{"event":"stop"}"#.into()))
+        .await
+        .unwrap();
+    let final_event = next_event(&mut probe_socket).await;
+    assert_eq!(final_event["event"], "final");
+    assert_eq!(final_event["text"], "native recovered");
+
+    let (mut recovered_socket, _) = connect_async(url).await.unwrap();
+    recovered_socket
+        .send(Message::Text(r#"{"event":"start"}"#.into()))
+        .await
+        .unwrap();
+    let recovered = next_event(&mut recovered_socket).await;
+    assert_eq!(recovered["event"], "session_started");
 
     server.abort();
 }

@@ -239,7 +239,7 @@ fn transcribe_short_doc() {}
     responses(
         (
             status = 101,
-            description = "WebSocket upgraded. Send {\"event\":\"start\"}, then aligned raw pcm_s16le 16 kHz mono binary chunks, then {\"event\":\"stop\"}. If /v1/capabilities reports supports_native_streaming=true for the realtime backend, chunks are routed into a stateful native streaming session. Otherwise, Aximo uses bounded buffered realtime: partial events use latest-wins coalescing from a bounded rolling window and final transcribes the full bounded session buffer. Error events include machine-readable code and human-readable reason."
+            description = "WebSocket upgraded. Send {\"event\":\"start\"}, then aligned raw pcm_s16le 16 kHz mono binary chunks, then {\"event\":\"stop\"}. If /v1/capabilities reports supports_native_streaming=true for the realtime backend, chunks are routed through a bounded native streaming worker into a stateful native streaming session. Otherwise, Aximo uses bounded buffered realtime: partial events use latest-wins coalescing from a bounded rolling window and final transcribes the full bounded session buffer. Error events include machine-readable code and human-readable reason; operational errors include engine_degraded and inference_timeout."
         )
     )
 )]

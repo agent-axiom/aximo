@@ -66,6 +66,9 @@ async fn openapi_realtime_description_names_buffering_and_partial_semantics() {
     assert!(description.contains("bounded buffered realtime"));
     assert!(description.contains("supports_native_streaming=true"));
     assert!(description.contains("stateful native streaming session"));
+    assert!(description.contains("bounded native streaming worker"));
+    assert!(description.contains("engine_degraded"));
+    assert!(description.contains("inference_timeout"));
     assert!(description.contains("latest-wins"));
     assert!(description.contains("full bounded session buffer"));
 }

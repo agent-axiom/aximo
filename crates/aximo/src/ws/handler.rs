@@ -1,6 +1,9 @@
-use std::time::{Duration, Instant};
+use std::{
+    sync::mpsc as std_mpsc,
+    time::{Duration, Instant},
+};
 
-use aximo_core::{PartialSchedule, SessionError, ShortAudioRequest};
+use aximo_core::{PartialSchedule, SessionError, ShortAudioRequest, ShortAudioResult};
 use aximo_inference::engine::{InferenceError, StreamingSpeechSession};
 use axum::{
     extract::{
@@ -10,7 +13,7 @@ use axum::{
     response::IntoResponse,
 };
 use futures_util::{SinkExt, StreamExt};
-use tokio::sync::{mpsc, mpsc::error::TrySendError, oneshot};
+use tokio::sync::{mpsc, mpsc::error::TrySendError, oneshot, OwnedSemaphorePermit};
 
 use crate::{
     app::AppState,
@@ -24,6 +27,171 @@ const PCM_SAMPLE_RATE: u64 = 16_000;
 const PCM_BYTES_PER_SAMPLE: usize = 2;
 const WRITER_DRAIN_TIMEOUT: Duration = Duration::from_millis(100);
 const CLOSE_FRAME_LINGER: Duration = Duration::from_millis(50);
+const NATIVE_STREAMING_COMMAND_CAPACITY: usize = 1;
+
+#[derive(Clone)]
+struct NativeStreamingWorker {
+    sender: std_mpsc::SyncSender<NativeStreamingCommand>,
+}
+
+enum NativeStreamingCommand {
+    Accept {
+        chunk: Vec<u8>,
+        scheduler_permit: OwnedSemaphorePermit,
+        execution_permit: OwnedSemaphorePermit,
+        metrics: crate::metrics::Metrics,
+        response: oneshot::Sender<Result<Option<ShortAudioResult>, InferenceError>>,
+    },
+    Finish {
+        scheduler_permit: OwnedSemaphorePermit,
+        execution_permit: OwnedSemaphorePermit,
+        metrics: crate::metrics::Metrics,
+        response: oneshot::Sender<Result<ShortAudioResult, InferenceError>>,
+    },
+}
+
+#[derive(Debug)]
+enum NativeStreamingCallError {
+    Timeout { timeout_ms: u64 },
+    Inference(InferenceError),
+    QueueFull,
+    WorkerStopped,
+}
+
+struct NativeExecutionGuard {
+    metrics: crate::metrics::Metrics,
+}
+
+impl NativeExecutionGuard {
+    fn new(metrics: crate::metrics::Metrics) -> Self {
+        metrics.inc_blocking_tasks_active();
+        metrics.inc_model_executions_active();
+        Self { metrics }
+    }
+}
+
+impl Drop for NativeExecutionGuard {
+    fn drop(&mut self) {
+        self.metrics.dec_model_executions_active();
+        self.metrics.dec_blocking_tasks_active();
+    }
+}
+
+impl NativeStreamingWorker {
+    fn start(stream: Box<dyn StreamingSpeechSession>) -> Result<Self, InferenceError> {
+        let (sender, receiver) = std_mpsc::sync_channel(NATIVE_STREAMING_COMMAND_CAPACITY);
+        std::thread::Builder::new()
+            .name("aximo-native-streaming-worker".to_string())
+            .spawn(move || native_streaming_worker_loop(stream, receiver))
+            .map_err(|error| {
+                InferenceError::Runtime(format!("failed to start native streaming worker: {error}"))
+            })?;
+
+        Ok(Self { sender })
+    }
+
+    async fn accept_pcm_chunk(
+        &self,
+        chunk: Vec<u8>,
+        scheduler_permit: OwnedSemaphorePermit,
+        execution_permit: OwnedSemaphorePermit,
+        metrics: crate::metrics::Metrics,
+        kind: &'static str,
+        timeout_duration: Duration,
+    ) -> Result<Option<ShortAudioResult>, NativeStreamingCallError> {
+        let (response, receiver) = oneshot::channel();
+        self.sender
+            .try_send(NativeStreamingCommand::Accept {
+                chunk,
+                scheduler_permit,
+                execution_permit,
+                metrics: metrics.clone(),
+                response,
+            })
+            .map_err(|error| match error {
+                std_mpsc::TrySendError::Full(_) => NativeStreamingCallError::QueueFull,
+                std_mpsc::TrySendError::Disconnected(_) => NativeStreamingCallError::WorkerStopped,
+            })?;
+
+        wait_native_streaming_response(receiver, metrics, kind, timeout_duration).await
+    }
+
+    async fn finish(
+        self,
+        scheduler_permit: OwnedSemaphorePermit,
+        execution_permit: OwnedSemaphorePermit,
+        metrics: crate::metrics::Metrics,
+        kind: &'static str,
+        timeout_duration: Duration,
+    ) -> Result<ShortAudioResult, NativeStreamingCallError> {
+        let (response, receiver) = oneshot::channel();
+        self.sender
+            .try_send(NativeStreamingCommand::Finish {
+                scheduler_permit,
+                execution_permit,
+                metrics: metrics.clone(),
+                response,
+            })
+            .map_err(|error| match error {
+                std_mpsc::TrySendError::Full(_) => NativeStreamingCallError::QueueFull,
+                std_mpsc::TrySendError::Disconnected(_) => NativeStreamingCallError::WorkerStopped,
+            })?;
+
+        wait_native_streaming_response(receiver, metrics, kind, timeout_duration).await
+    }
+}
+
+async fn wait_native_streaming_response<T>(
+    receiver: oneshot::Receiver<Result<T, InferenceError>>,
+    metrics: crate::metrics::Metrics,
+    kind: &'static str,
+    timeout_duration: Duration,
+) -> Result<T, NativeStreamingCallError> {
+    let timeout_ms = timeout_duration.as_millis().try_into().unwrap_or(u64::MAX);
+    match tokio::time::timeout(timeout_duration, receiver).await {
+        Ok(Ok(Ok(result))) => Ok(result),
+        Ok(Ok(Err(error))) => Err(NativeStreamingCallError::Inference(error)),
+        Ok(Err(_)) => Err(NativeStreamingCallError::WorkerStopped),
+        Err(_) => {
+            metrics.record_inference_timeout(kind);
+            Err(NativeStreamingCallError::Timeout { timeout_ms })
+        }
+    }
+}
+
+fn native_streaming_worker_loop(
+    mut stream: Box<dyn StreamingSpeechSession>,
+    receiver: std_mpsc::Receiver<NativeStreamingCommand>,
+) {
+    while let Ok(command) = receiver.recv() {
+        match command {
+            NativeStreamingCommand::Accept {
+                chunk,
+                scheduler_permit,
+                execution_permit,
+                metrics,
+                response,
+            } => {
+                let _scheduler_permit = scheduler_permit;
+                let _execution_permit = execution_permit;
+                let _guard = NativeExecutionGuard::new(metrics);
+                let _ = response.send(stream.accept_pcm_chunk(&chunk));
+            }
+            NativeStreamingCommand::Finish {
+                scheduler_permit,
+                execution_permit,
+                metrics,
+                response,
+            } => {
+                let _scheduler_permit = scheduler_permit;
+                let _execution_permit = execution_permit;
+                let _guard = NativeExecutionGuard::new(metrics);
+                let _ = response.send(stream.finish());
+                break;
+            }
+        }
+    }
+}
 
 pub async fn realtime_socket(
     ws: WebSocketUpgrade,
@@ -112,20 +280,35 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                                 let session_id = state
                                     .session_manager
                                     .start_session(permit, state.realtime_session_limits);
-                                let native_stream = if state
+                                let native_worker = if state
                                     .realtime_engine
                                     .capabilities()
                                     .supports_native_streaming
                                 {
-                                    match state.realtime_engine.start_streaming_session() {
-                                        Ok(stream) => Some(stream),
+                                    match start_native_streaming_worker(&state).await {
+                                        Ok(worker) => {
+                                            state.runtime_health.record_success(format!(
+                                                "realtime_stream:{}",
+                                                state.realtime_engine_name
+                                            ));
+                                            Some(worker)
+                                        }
                                         Err(error) => {
                                             let _ =
                                                 state.session_manager.finish_session(&session_id);
+                                            record_native_streaming_call_health(
+                                                &state,
+                                                &format!(
+                                                    "realtime_stream:{}",
+                                                    state.realtime_engine_name
+                                                ),
+                                                "realtime_stream",
+                                                &error,
+                                            );
                                             health_admission.cancel(&state);
                                             queue_or_break!(ServerEvent::error(
                                                 "streaming_start_failed",
-                                                error.to_string(),
+                                                native_streaming_start_error_reason(error),
                                             ),);
                                             continue;
                                         }
@@ -135,11 +318,11 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                                 };
 
                                 state.metrics.inc_ws_sessions_active();
-                                active_session = Some(match native_stream {
-                                    Some(stream) => ActiveRealtimeSession::Native {
+                                active_session = Some(match native_worker {
+                                    Some(worker) => ActiveRealtimeSession::Native {
                                         session_id: session_id.clone(),
                                         health_admission,
-                                        stream,
+                                        worker,
                                         started_at: Instant::now(),
                                         bytes_received: 0,
                                     },
@@ -231,7 +414,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                             }
                         }
                         ActiveRealtimeSession::Native {
-                            stream,
+                            worker,
                             started_at,
                             bytes_received,
                             ..
@@ -256,25 +439,95 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                             }
 
                             *bytes_received = bytes_received.saturating_add(chunk.len());
+                            let audio_duration_ms = pcm_duration_ms(chunk.len());
+                            let worker = worker.clone();
                             let health_component =
                                 format!("realtime_partial:{}", state.realtime_engine_name);
-                            match stream.accept_pcm_chunk(&chunk) {
+                            let wait_started_at = Instant::now();
+                            let scheduler_permit =
+                                state.scheduler.acquire_realtime_inference().await;
+                            let wait_elapsed = wait_started_at.elapsed();
+                            let model_wait_started_at = Instant::now();
+                            let execution_permit = match tokio::time::timeout(
+                                state.realtime_partial_timeout,
+                                state.realtime_engine.acquire_execution_permit(),
+                            )
+                            .await
+                            {
+                                Ok(permit) => {
+                                    state.metrics.record_model_execution_wait(
+                                        "realtime_partial",
+                                        model_wait_started_at.elapsed(),
+                                    );
+                                    permit
+                                }
+                                Err(_) => {
+                                    state.metrics.record_model_execution_wait(
+                                        "realtime_partial",
+                                        model_wait_started_at.elapsed(),
+                                    );
+                                    state
+                                        .metrics
+                                        .record_model_execution_wait_timeout("realtime_partial");
+                                    state.metrics.record_inference_timeout("realtime_partial");
+                                    record_native_streaming_call_health(
+                                        &state,
+                                        &health_component,
+                                        "realtime_partial",
+                                        &NativeStreamingCallError::Timeout {
+                                            timeout_ms: state
+                                                .realtime_partial_timeout
+                                                .as_millis()
+                                                .try_into()
+                                                .unwrap_or(u64::MAX),
+                                        },
+                                    );
+                                    cleanup_active_session(&state, &mut active_session);
+                                    queue_or_break!(ServerEvent::error(
+                                        "inference_timeout",
+                                        "realtime partial inference timed out",
+                                    ),);
+                                    continue;
+                                }
+                            };
+
+                            let inference_started_at = Instant::now();
+                            let native_result = worker
+                                .accept_pcm_chunk(
+                                    chunk.to_vec(),
+                                    scheduler_permit,
+                                    execution_permit,
+                                    state.metrics.clone(),
+                                    "realtime_partial",
+                                    state.realtime_partial_timeout,
+                                )
+                                .await;
+                            state.metrics.record_inference(
+                                "realtime_partial",
+                                wait_elapsed,
+                                inference_started_at.elapsed(),
+                                audio_duration_ms,
+                            );
+
+                            match native_result {
                                 Ok(Some(result)) => {
                                     state.runtime_health.record_success(health_component);
                                     queue_or_break!(ServerEvent::partial_text(result.text));
                                 }
-                                Ok(None) => {}
+                                Ok(None) => {
+                                    state.runtime_health.record_success(health_component);
+                                }
                                 Err(error) => {
-                                    record_native_inference_health(
+                                    record_native_streaming_call_health(
                                         &state,
                                         &health_component,
                                         "realtime_partial",
                                         &error,
                                     );
                                     cleanup_active_session(&state, &mut active_session);
-                                    queue_or_break!(ServerEvent::error(
-                                        "inference_failed",
-                                        error.to_string(),
+                                    queue_or_break!(map_native_streaming_error(
+                                        error,
+                                        "realtime partial inference timed out",
                                     ),);
                                 }
                             }
@@ -397,6 +650,78 @@ fn spawn_partial_inference(
     });
 }
 
+async fn start_native_streaming_worker(
+    state: &AppState,
+) -> Result<NativeStreamingWorker, NativeStreamingCallError> {
+    let kind = "realtime_stream";
+    let wait_started_at = Instant::now();
+    let scheduler_permit = state.scheduler.acquire_realtime_inference().await;
+    let wait_elapsed = wait_started_at.elapsed();
+
+    let model_wait_started_at = Instant::now();
+    let execution_permit = match tokio::time::timeout(
+        state.realtime_partial_timeout,
+        state.realtime_engine.acquire_execution_permit(),
+    )
+    .await
+    {
+        Ok(permit) => {
+            state
+                .metrics
+                .record_model_execution_wait(kind, model_wait_started_at.elapsed());
+            permit
+        }
+        Err(_) => {
+            state
+                .metrics
+                .record_model_execution_wait(kind, model_wait_started_at.elapsed());
+            state.metrics.record_model_execution_wait_timeout(kind);
+            state.metrics.record_inference_timeout(kind);
+            return Err(NativeStreamingCallError::Timeout {
+                timeout_ms: state
+                    .realtime_partial_timeout
+                    .as_millis()
+                    .try_into()
+                    .unwrap_or(u64::MAX),
+            });
+        }
+    };
+
+    let engine = state.realtime_engine.engine();
+    let metrics = state.metrics.clone();
+    let task_metrics = metrics.clone();
+    let inference_started_at = Instant::now();
+    let task = tokio::task::spawn_blocking(move || {
+        let _scheduler_permit = scheduler_permit;
+        let _execution_permit = execution_permit;
+        let _guard = NativeExecutionGuard::new(task_metrics);
+        engine.start_streaming_session()
+    });
+
+    let result = match tokio::time::timeout(state.realtime_partial_timeout, task).await {
+        Ok(Ok(result)) => result.map_err(NativeStreamingCallError::Inference),
+        Ok(Err(error)) => Err(NativeStreamingCallError::Inference(
+            InferenceError::Runtime(format!("native streaming start task failed: {error}")),
+        )),
+        Err(_) => {
+            metrics.record_inference_timeout(kind);
+            Err(NativeStreamingCallError::Timeout {
+                timeout_ms: state
+                    .realtime_partial_timeout
+                    .as_millis()
+                    .try_into()
+                    .unwrap_or(u64::MAX),
+            })
+        }
+    };
+
+    state
+        .metrics
+        .record_inference(kind, wait_elapsed, inference_started_at.elapsed(), 0);
+
+    NativeStreamingWorker::start(result?).map_err(NativeStreamingCallError::Inference)
+}
+
 enum ActiveRealtimeSession {
     Buffered {
         session_id: String,
@@ -405,7 +730,7 @@ enum ActiveRealtimeSession {
     Native {
         session_id: String,
         health_admission: RealtimeHealthAdmission,
-        stream: Box<dyn StreamingSpeechSession>,
+        worker: NativeStreamingWorker,
         started_at: Instant,
         bytes_received: usize,
     },
@@ -487,7 +812,7 @@ async fn finish_active_session(
         ActiveRealtimeSession::Native {
             session_id,
             health_admission,
-            mut stream,
+            worker,
             bytes_received,
             ..
         } => {
@@ -495,12 +820,76 @@ async fn finish_active_session(
             state.metrics.dec_ws_sessions_active();
             let audio_duration_ms = pcm_duration_ms(bytes_received);
             let wait_started_at = Instant::now();
-            let _inference_permit = state.scheduler.acquire_realtime_inference().await;
+            let inference_permit = state.scheduler.acquire_realtime_inference().await;
             let wait_elapsed = wait_started_at.elapsed();
 
             let inference_started_at = Instant::now();
             let health_component = format!("realtime_final:{}", state.realtime_engine_name);
-            match stream.finish() {
+            let model_wait_started_at = Instant::now();
+            let execution_permit = match tokio::time::timeout(
+                state.realtime_final_timeout,
+                state.realtime_engine.acquire_execution_permit(),
+            )
+            .await
+            {
+                Ok(permit) => {
+                    state.metrics.record_model_execution_wait(
+                        "realtime_final",
+                        model_wait_started_at.elapsed(),
+                    );
+                    permit
+                }
+                Err(_) => {
+                    state.metrics.record_model_execution_wait(
+                        "realtime_final",
+                        model_wait_started_at.elapsed(),
+                    );
+                    state
+                        .metrics
+                        .record_model_execution_wait_timeout("realtime_final");
+                    state.metrics.record_inference_timeout("realtime_final");
+                    record_native_streaming_call_health(
+                        state,
+                        &health_component,
+                        "realtime_final",
+                        &NativeStreamingCallError::Timeout {
+                            timeout_ms: state
+                                .realtime_final_timeout
+                                .as_millis()
+                                .try_into()
+                                .unwrap_or(u64::MAX),
+                        },
+                    );
+                    state.metrics.record_inference(
+                        "realtime_final",
+                        wait_elapsed,
+                        inference_started_at.elapsed(),
+                        audio_duration_ms,
+                    );
+                    let _ = queue_event_or_overflow(
+                        state,
+                        event_tx,
+                        overflow_tx,
+                        ServerEvent::error(
+                            "inference_timeout",
+                            "realtime final inference timed out",
+                        ),
+                    );
+                    health_admission.cancel(state);
+                    return;
+                }
+            };
+
+            match worker
+                .finish(
+                    inference_permit,
+                    execution_permit,
+                    state.metrics.clone(),
+                    "realtime_final",
+                    state.realtime_final_timeout,
+                )
+                .await
+            {
                 Ok(result) => {
                     state.runtime_health.record_success(health_component);
                     state.metrics.record_inference(
@@ -517,7 +906,7 @@ async fn finish_active_session(
                     );
                 }
                 Err(error) => {
-                    record_native_inference_health(
+                    record_native_streaming_call_health(
                         state,
                         &health_component,
                         "realtime_final",
@@ -533,7 +922,7 @@ async fn finish_active_session(
                         state,
                         event_tx,
                         overflow_tx,
-                        ServerEvent::error("inference_failed", error.to_string()),
+                        map_native_streaming_error(error, "realtime final inference timed out"),
                     );
                 }
             }
@@ -604,6 +993,42 @@ fn map_realtime_inference_error(
     }
 }
 
+fn map_native_streaming_error(
+    error: NativeStreamingCallError,
+    timeout_reason: &'static str,
+) -> ServerEvent {
+    match error {
+        NativeStreamingCallError::Timeout { timeout_ms } => ServerEvent::error(
+            "inference_timeout",
+            format!("{timeout_reason} after {timeout_ms}ms"),
+        ),
+        NativeStreamingCallError::Inference(error) => {
+            ServerEvent::error("inference_failed", error.to_string())
+        }
+        NativeStreamingCallError::QueueFull => ServerEvent::error(
+            "native_streaming_backpressure",
+            "native streaming worker queue is full",
+        ),
+        NativeStreamingCallError::WorkerStopped => ServerEvent::error(
+            "inference_failed",
+            "native streaming worker stopped before returning a result",
+        ),
+    }
+}
+
+fn native_streaming_start_error_reason(error: NativeStreamingCallError) -> String {
+    match error {
+        NativeStreamingCallError::Timeout { timeout_ms } => {
+            format!("native streaming start timed out after {timeout_ms}ms")
+        }
+        NativeStreamingCallError::Inference(error) => error.to_string(),
+        NativeStreamingCallError::QueueFull => "native streaming worker queue is full".to_string(),
+        NativeStreamingCallError::WorkerStopped => {
+            "native streaming worker stopped before returning a result".to_string()
+        }
+    }
+}
+
 fn record_inference_health(
     state: &AppState,
     component: &str,
@@ -625,6 +1050,26 @@ fn record_inference_health(
             | InferenceError::UnsupportedEngine(_)
             | InferenceError::UnsupportedStreaming(_),
         ) => {}
+    }
+}
+
+fn record_native_streaming_call_health(
+    state: &AppState,
+    component: &str,
+    kind: &'static str,
+    error: &NativeStreamingCallError,
+) {
+    match error {
+        NativeStreamingCallError::Timeout { .. } => state
+            .runtime_health
+            .record_failure(component, format!("{kind} inference timeout")),
+        NativeStreamingCallError::Inference(error) => {
+            record_native_inference_health(state, component, kind, error);
+        }
+        NativeStreamingCallError::WorkerStopped => state
+            .runtime_health
+            .record_failure(component, format!("{kind} worker stopped")),
+        NativeStreamingCallError::QueueFull => {}
     }
 }
 
@@ -666,10 +1111,19 @@ fn admit_realtime_engine(state: &AppState) -> Result<RealtimeHealthAdmission, St
         return Ok(admission);
     }
 
-    for component in [
+    let mut components = vec![
         format!("realtime_partial:{}", state.realtime_engine_name),
         format!("realtime_final:{}", state.realtime_engine_name),
-    ] {
+    ];
+    if state
+        .realtime_engine
+        .capabilities()
+        .supports_native_streaming
+    {
+        components.push(format!("realtime_stream:{}", state.realtime_engine_name));
+    }
+
+    for component in components {
         match state.runtime_health.admit_component(component.clone()) {
             crate::runtime_health::ComponentAdmission::Allowed => {}
             crate::runtime_health::ComponentAdmission::RecoveryProbe => {
@@ -716,6 +1170,13 @@ fn pcm_duration_ms(byte_len: usize) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::{
+        sync::mpsc as std_mpsc,
+        time::{Duration, Instant},
+    };
+
+    use aximo_core::Scheduler;
+    use aximo_inference::engine::FakeEngine;
 
     #[test]
     fn queue_event_reports_full_bounded_channel() {
@@ -729,5 +1190,65 @@ mod tests {
             queue_event(&event_tx, ServerEvent::partial_text("second")),
             Err(QueueEventError::Full)
         );
+    }
+
+    struct BlockingNativeSession {
+        release_rx: Option<std_mpsc::Receiver<()>>,
+    }
+
+    impl StreamingSpeechSession for BlockingNativeSession {
+        fn accept_pcm_chunk(
+            &mut self,
+            _chunk: &[u8],
+        ) -> Result<Option<aximo_core::ShortAudioResult>, InferenceError> {
+            if let Some(release_rx) = self.release_rx.take() {
+                let _ = release_rx.recv();
+            }
+
+            Ok(None)
+        }
+
+        fn finish(&mut self) -> Result<aximo_core::ShortAudioResult, InferenceError> {
+            Ok(aximo_core::ShortAudioResult::new(
+                "finished",
+                "blocking-native-test",
+            ))
+        }
+    }
+
+    #[tokio::test]
+    async fn native_streaming_worker_timeout_does_not_wait_for_blocking_session() {
+        let (release_tx, release_rx) = std_mpsc::channel();
+        let worker = NativeStreamingWorker::start(Box::new(BlockingNativeSession {
+            release_rx: Some(release_rx),
+        }))
+        .expect("native streaming worker starts");
+        let scheduler = Scheduler::new(1, 1, 1, 1);
+        let scheduler_permit = scheduler.acquire_realtime_inference().await;
+        let runtime = crate::engine_runtime::EngineRuntime::new(std::sync::Arc::new(FakeEngine));
+        let execution_permit = runtime.acquire_execution_permit().await;
+        let started_at = Instant::now();
+
+        let result = worker
+            .accept_pcm_chunk(
+                vec![0, 0],
+                scheduler_permit,
+                execution_permit,
+                crate::metrics::Metrics::default(),
+                "realtime_partial",
+                Duration::from_millis(10),
+            )
+            .await;
+
+        assert!(matches!(
+            result,
+            Err(NativeStreamingCallError::Timeout { .. })
+        ));
+        assert!(
+            started_at.elapsed() < Duration::from_millis(100),
+            "native worker timeout should not wait for the blocking session call"
+        );
+
+        let _ = release_tx.send(());
     }
 }

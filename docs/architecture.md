@@ -41,7 +41,7 @@ sequenceDiagram
 
 ### Realtime
 
-Realtime has two execution modes. If the configured realtime backend reports `supports_native_streaming=true`, the WebSocket handler creates a stateful backend streaming session and passes each chunk directly to it. Otherwise, Aximo uses bounded buffered realtime: live WebSocket chunks produce partial/final events, but the current Parakeet/GigaAM `transcribe-rs` paths still run bounded offline decodes rather than a true incremental decoder.
+Realtime has two execution modes. If the configured realtime backend reports `supports_native_streaming=true`, the WebSocket handler creates a stateful backend streaming session and routes chunk/final calls through a bounded native streaming worker with timeout/backpressure handling. Otherwise, Aximo uses bounded buffered realtime: live WebSocket chunks produce partial/final events, but the current Parakeet/GigaAM `transcribe-rs` paths still run bounded offline decodes rather than a true incremental decoder.
 
 ```mermaid
 sequenceDiagram
@@ -49,6 +49,7 @@ sequenceDiagram
     participant W as WebSocket handler
     participant M as SessionManager
     participant S as Scheduler
+    participant N as Native Streaming Worker
     participant P as Partial Worker
     participant E as Realtime Engine
 
@@ -58,12 +59,18 @@ sequenceDiagram
     W->>M: create session
     alt backend supports native streaming
         W->>E: start_streaming_session()
+        E-->>W: streaming session
+        W->>N: spawn bounded worker
     end
     W-->>C: session_started
     C->>W: binary audio chunk
     alt native streaming backend
-        W->>E: accept_pcm_chunk(chunk)
-        E-->>W: optional partial text
+        W->>S: await realtime inference permit
+        S-->>W: inference permit
+        W->>N: accept_pcm_chunk(chunk)
+        N->>E: stateful chunk processing
+        E-->>N: optional partial text
+        N-->>W: optional partial text
         W-->>C: partial
     else bounded buffered backend
         W->>M: append chunk
@@ -78,8 +85,12 @@ sequenceDiagram
     end
     C->>W: stop
     alt native streaming backend
-        W->>E: finish()
-        E-->>W: final text
+        W->>S: await realtime inference permit
+        S-->>W: inference permit
+        W->>N: finish()
+        N->>E: stateful finalization
+        E-->>N: final text
+        N-->>W: final text
     else bounded buffered backend
         W->>M: finish session
         W->>S: await realtime inference permit
@@ -103,13 +114,13 @@ sequenceDiagram
 - `POST /v1/transcriptions` accepts `engine`, `language`/`language_hint`, and `timestamps` query options. `engine` must match the configured offline engine for the service instance; metadata options are forwarded but remain backend-capability dependent.
 - `GET /v1/capabilities` reports the active offline/realtime model capabilities from the backend adapter, including supported languages, timestamp support, language-detection support, and native streaming support.
 - Short-audio container decode takes axum `Bytes` directly to avoid an extra input-buffer copy. Decoded samples are still materialized in memory before normalization and are bounded by configured sample/duration/body limits.
-- Realtime partials are best-effort and latest-wins under saturation for bounded buffered backends; native streaming backends may return partials directly from their stateful streaming session. Final transcriptions remain strict in both modes.
+- Realtime partials are best-effort and latest-wins under saturation for bounded buffered backends; native streaming backends may return partials directly from their stateful streaming session through the bounded worker. Final transcriptions remain strict in both modes.
 - `segments` and `detected_language` are capability-dependent response fields. Aximo maps real `transcribe-rs` segment metadata when `timestamps=true` and the backend provides it. `detected_language` remains `null` while `/v1/capabilities` reports `supports_language_detection=false`.
 
 ## Observability
 
 `GET /metrics` returns Prometheus-compatible text metrics for request status/code counts, error codes, audio body size, decoded audio duration, decode time, scheduler wait, model execution wait, model-gate wait timeouts, inference wall time, realtime factor, inference timeouts, active blocking tasks, active model executions, runtime component health, active websocket sessions, queue overflows, stale partial skips, and coalesced realtime partials. Decode, duration, wait, inference, and RTF series are emitted as histograms with `_bucket`, `_sum`, and `_count`.
 
-`GET /health/live` is process liveness. `GET /health/ready` reflects runtime health and returns `503` after consecutive timeout/runtime/unavailable inference failures cross the configured degradation threshold for any component. Health is tracked per component key, for example `short:parakeet`, `realtime_partial:parakeet`, and `realtime_final:parakeet`; successful inference clears only the component that succeeded.
+`GET /health/live` is process liveness. `GET /health/ready` reflects runtime health and returns `503` after consecutive timeout/runtime/unavailable inference failures cross the configured degradation threshold for any component. Health is tracked per component key, for example `short:parakeet`, `realtime_stream:<engine>`, `realtime_partial:parakeet`, and `realtime_final:parakeet`; successful inference clears only the component that succeeded.
 
 `runtime_degraded_policy` controls whether degraded state is only an orchestrator signal or also a request admission policy. `readiness_only` preserves Kubernetes-style behavior where readiness removes the pod from service endpoints but direct callers can still retry. `fail_fast_inference` rejects new short-audio requests or realtime session starts for degraded engine paths with `engine_degraded`, then allows one half-open recovery probe after `runtime_degraded_recovery_cooldown_ms`. If a half-open probe fails with a client-side error before reaching inference, Aximo consumes that probe window and restarts the cooldown while preserving the previous engine failure reason.

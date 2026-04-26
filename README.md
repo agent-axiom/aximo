@@ -28,6 +28,7 @@ Architecture and protocol details live in:
 - [docs/benchmarks.md](docs/benchmarks.md)
 - [docs/benchmark-baselines.md](docs/benchmark-baselines.md)
 - [docs/kubernetes.md](docs/kubernetes.md)
+- [docs/deployment-security.md](docs/deployment-security.md)
 
 ## Models
 
@@ -217,13 +218,13 @@ Unsupported short-audio media types return `415 Unsupported Media Type` with cod
 
 ## Realtime Example
 
-Realtime uses WebSocket and raw `pcm_s16le`, `16 kHz`, mono binary chunks. If `/v1/capabilities` reports `supports_native_streaming=true`, the WebSocket handler creates a stateful native streaming session and sends chunks to that backend without building a full final buffer. Otherwise, Aximo uses bounded buffered realtime.
+Realtime uses WebSocket and raw `pcm_s16le`, `16 kHz`, mono binary chunks. If `/v1/capabilities` reports `supports_native_streaming=true`, the WebSocket handler creates a stateful native streaming session and routes chunk/final calls through a bounded native streaming worker with timeout and backpressure handling, so backend calls do not run directly inside the WebSocket loop. Otherwise, Aximo uses bounded buffered realtime.
 For bounded buffered realtime, partial hypotheses are computed from a bounded rolling recent window and use latest-wins coalescing under load, so they favor freshness over a steady partial cadence. The final transcription on `stop` waits for the realtime inference slot and runs over the full bounded session buffer.
 Admission limits and inference limits are configured separately: `max_short_audio_requests` and `max_realtime_sessions` bound accepted work, while `max_short_inferences` and `max_realtime_inferences` bound per-path inference admission. Actual backend execution is additionally protected by a per-engine model gate, shared when offline and realtime reuse the same engine instance.
 Current CPU model execution is safety-first: one loaded model instance has one execution slot. Increase throughput by running more service replicas or, in a future worker-pool design, by loading multiple model replicas.
 Realtime server events are sent through a bounded per-socket queue; clients that stop reading can be disconnected instead of accumulating unbounded memory.
 Realtime chunks must be aligned to `pcm_s16le` sample width; odd-length binary frames return `invalid_audio_chunk`.
-Realtime partial and final inference have separate timeout budgets. A timeout releases Aximo's scheduler permit and returns an `inference_timeout` event, but the underlying `spawn_blocking` task may continue until the backend call returns because Rust cannot safely kill that OS thread. The per-engine model gate stays held until that backend call actually exits, so timed-out calls cannot admit unlimited follow-up backend executions.
+Realtime partial and final inference have separate timeout budgets. A timeout returns an `inference_timeout` event, but the underlying blocking backend call may continue until it returns because Rust cannot safely kill that OS thread. The per-engine model gate stays held until that backend call actually exits, so timed-out calls cannot admit unlimited follow-up backend executions. Native streaming health is tracked separately for stream start, partial chunk handling, and finalization through `realtime_stream:<engine>`, `realtime_partial:<engine>`, and `realtime_final:<engine>`.
 
 ```js
 const ws = new WebSocket("ws://127.0.0.1:8080/v1/realtime");
@@ -344,6 +345,8 @@ Container builds request BuildKit SBOM and provenance attestations.
 ## Security
 
 Security reporting is documented in [SECURITY.md](SECURITY.md). The `Security` GitHub Actions workflow runs `cargo audit`, `cargo deny check`, and CycloneDX SBOM generation.
+
+Aximo should not be exposed directly to untrusted clients without an authenticated ingress or API gateway. Use [docs/deployment-security.md](docs/deployment-security.md) for ingress authentication, mTLS/API-key/JWT options, and rate limiting guidance.
 
 ## crates.io
 

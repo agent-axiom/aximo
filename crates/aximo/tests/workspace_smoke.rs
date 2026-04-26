@@ -132,6 +132,8 @@ fn workspace_exposes_benchmark_suite() {
     assert!(docs.contains("benchmark-baselines.md"));
     assert!(docs.contains("Parakeet"));
     assert!(docs.contains("GigaAM"));
+    assert!(docs.contains("Production benchmark acceptance"));
+    assert!(docs.contains("human speech"));
 }
 
 #[test]
@@ -146,11 +148,14 @@ fn workspace_documents_backend_capability_closure() {
         std::fs::read_to_string(root.join("docs/realtime-protocol.md")).unwrap();
 
     assert!(readme.contains("backend extension point for native streaming sessions"));
+    assert!(readme.contains("bounded native streaming worker"));
     assert!(readme.contains("bounded windowed-sinc"));
     assert!(readme.contains("supports_language_detection=false"));
     assert!(architecture.contains("start_streaming_session()"));
-    assert!(architecture.contains("accept_pcm_chunk(chunk)"));
+    assert!(architecture.contains("Native Streaming Worker"));
+    assert!(architecture.contains("realtime_stream:<engine>"));
     assert!(realtime_protocol.contains("supports_native_streaming=true"));
+    assert!(realtime_protocol.contains("bounded native streaming worker"));
     assert!(realtime_protocol.contains("finish()"));
 }
 
@@ -168,11 +173,16 @@ fn workspace_exposes_kubernetes_manifests() {
     assert!(root.join("deploy/kubernetes/service.yaml").exists());
     assert!(root.join("deploy/kubernetes/configmap.yaml").exists());
     assert!(root.join("deploy/kubernetes/pvc.yaml").exists());
+    assert!(root.join("deploy/kubernetes/networkpolicy.yaml").exists());
+    assert!(root.join("deploy/kubernetes/pdb.yaml").exists());
     assert!(deployment.contains("readinessProbe"));
     assert!(deployment.contains("livenessProbe"));
+    assert!(deployment.contains("allowPrivilegeEscalation: false"));
     assert!(deployment.contains("AXIMO_RUNTIME_DEGRADED_POLICY"));
     assert!(deployment.contains("AXIMO_RUNTIME_DEGRADED_RECOVERY_COOLDOWN_MS"));
     assert!(docs.contains("kubectl apply -k deploy/kubernetes"));
+    assert!(docs.contains("NetworkPolicy"));
+    assert!(docs.contains("PodDisruptionBudget"));
 }
 
 #[test]
@@ -186,6 +196,8 @@ fn workspace_exposes_security_release_hardening() {
     let container_workflow =
         std::fs::read_to_string(root.join(".github/workflows/container.yml")).unwrap();
     let security_policy = std::fs::read_to_string(root.join("SECURITY.md")).unwrap();
+    let deployment_security =
+        std::fs::read_to_string(root.join("docs/deployment-security.md")).unwrap();
     let justfile = std::fs::read_to_string(root.join("justfile")).unwrap();
     let deny = std::fs::read_to_string(root.join("deny.toml")).unwrap();
 
@@ -201,4 +213,7 @@ fn workspace_exposes_security_release_hardening() {
     assert!(container_workflow.contains("sbom: true"));
     assert!(container_workflow.contains("provenance: true"));
     assert!(security_policy.contains("Reporting a Vulnerability"));
+    assert!(deployment_security.contains("ingress authentication"));
+    assert!(deployment_security.contains("rate limiting"));
+    assert!(deployment_security.contains("API keys, JWT, OAuth2/OIDC, or mTLS"));
 }

@@ -34,3 +34,14 @@ The default example requests 2 CPU cores and 3 GiB memory and limits the pod to 
 - CPU request/limit for target RTF;
 - memory for model residency and decode buffers;
 - replica count for throughput, because one loaded model instance has one execution slot.
+
+## Hardening
+
+The example Deployment runs as a non-root user, drops Linux capabilities, disables privilege escalation, uses a read-only root filesystem, mounts models read-only, and provides a writable `/tmp` `emptyDir` for transient decode/inference artifacts.
+
+The kustomization also includes:
+
+- `NetworkPolicy`: limits Aximo pod ingress to TCP `8080` from cluster namespaces. Tighten the `from` selector to your ingress-controller namespace or gateway labels in shared clusters.
+- `PodDisruptionBudget`: keeps voluntary disruptions from evicting every Aximo replica at once. Increase replicas before relying on it for availability.
+
+Authentication and public ingress controls are intentionally kept outside these manifests. Use [deployment-security.md](deployment-security.md) for ingress authentication and rate limiting guidance before exposing Aximo outside a private network.
