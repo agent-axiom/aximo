@@ -12,6 +12,14 @@
 - `GET /docs/` for Swagger UI with a built-in microphone recorder panel
 - `GET /metrics` for Prometheus-compatible operational metrics
 
+## Live Demo
+
+Try Aximo in your browser:
+
+https://ifif-aximo.hf.space/docs
+
+The demo runs on a free CPU Hugging Face Space, so cold starts and slower inference are expected.
+
 ## Workspace
 
 - `crates/aximo`: HTTP and WebSocket service binary
