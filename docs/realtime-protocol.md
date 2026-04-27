@@ -69,6 +69,7 @@ binary audio chunk
 - Partial and final inference use separate timeout budgets. If a timeout fires, the client receives `inference_timeout`; the underlying blocking backend call may still return later because the server cannot safely kill the OS blocking thread.
 - A per-engine execution gate is held inside the blocking task until the backend call actually returns. This keeps timeout semantics honest: client wait is bounded, but timed-out backend work still occupies model execution capacity until it exits.
 - Native streaming worker commands use a bounded queue. Queue saturation returns `native_streaming_backpressure` instead of allowing unbounded command buildup.
+- Native streaming currently uses one native worker thread per active native streaming session. This is deliberate for isolation and to keep backend calls out of the WebSocket loop, but high native-streaming session counts must be benchmarked before increasing capacity.
 - Runtime health is tracked separately for `realtime_stream:<engine>`, `realtime_partial:<engine>`, and `realtime_final:<engine>`, so a flaky stream start or partial path does not automatically hide behind a successful short-audio request.
 
 All of the above return a server event with `{"event":"error","code":"...","reason":"..."}`.

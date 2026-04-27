@@ -320,6 +320,7 @@ On SIGINT or SIGTERM, Aximo notifies active websocket handlers, sends close fram
 ## Known Limits
 
 - Realtime uses a native streaming session only when `/v1/capabilities` reports `supports_native_streaming=true`; Parakeet and GigaAM currently report `false`, so they intentionally use bounded buffered realtime.
+- Native streaming currently uses one native worker thread per active native streaming session. This keeps backend calls out of the WebSocket loop, but high native-streaming session counts must be benchmarked before raising `max_realtime_sessions`.
 - `segments` is backend-dependent and only returned when `timestamps=true`; `detected_language` stays `null` while `/v1/capabilities` reports `supports_language_detection=false`.
 - Container decode now avoids an extra input-buffer copy from axum `Bytes`, but decoded samples are still materialized in memory before normalization.
 - Audio resampling now uses a bounded windowed-sinc path, but production WER/CER work should still validate preprocessing quality against real audio.

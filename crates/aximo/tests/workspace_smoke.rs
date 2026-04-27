@@ -149,6 +149,7 @@ fn workspace_documents_backend_capability_closure() {
 
     assert!(readme.contains("backend extension point for native streaming sessions"));
     assert!(readme.contains("bounded native streaming worker"));
+    assert!(readme.contains("one native worker thread per active native streaming session"));
     assert!(readme.contains("bounded windowed-sinc"));
     assert!(readme.contains("supports_language_detection=false"));
     assert!(architecture.contains("start_streaming_session()"));
@@ -156,6 +157,9 @@ fn workspace_documents_backend_capability_closure() {
     assert!(architecture.contains("realtime_stream:<engine>"));
     assert!(realtime_protocol.contains("supports_native_streaming=true"));
     assert!(realtime_protocol.contains("bounded native streaming worker"));
+    assert!(
+        realtime_protocol.contains("one native worker thread per active native streaming session")
+    );
     assert!(realtime_protocol.contains("finish()"));
 }
 

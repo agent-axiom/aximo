@@ -1172,6 +1172,7 @@ mod tests {
     use super::*;
     use std::{
         sync::mpsc as std_mpsc,
+        sync::Arc,
         time::{Duration, Instant},
     };
 
@@ -1193,7 +1194,9 @@ mod tests {
     }
 
     struct BlockingNativeSession {
+        accept_started_tx: Option<oneshot::Sender<()>>,
         release_rx: Option<std_mpsc::Receiver<()>>,
+        finish_release_rx: Option<std_mpsc::Receiver<()>>,
     }
 
     impl StreamingSpeechSession for BlockingNativeSession {
@@ -1201,6 +1204,9 @@ mod tests {
             &mut self,
             _chunk: &[u8],
         ) -> Result<Option<aximo_core::ShortAudioResult>, InferenceError> {
+            if let Some(started_tx) = self.accept_started_tx.take() {
+                let _ = started_tx.send(());
+            }
             if let Some(release_rx) = self.release_rx.take() {
                 let _ = release_rx.recv();
             }
@@ -1209,6 +1215,10 @@ mod tests {
         }
 
         fn finish(&mut self) -> Result<aximo_core::ShortAudioResult, InferenceError> {
+            if let Some(release_rx) = self.finish_release_rx.take() {
+                let _ = release_rx.recv();
+            }
+
             Ok(aximo_core::ShortAudioResult::new(
                 "finished",
                 "blocking-native-test",
@@ -1216,24 +1226,34 @@ mod tests {
         }
     }
 
+    async fn realtime_scheduler_permit() -> OwnedSemaphorePermit {
+        Scheduler::new(1, 1, 1, 1)
+            .acquire_realtime_inference()
+            .await
+    }
+
+    async fn model_execution_permit() -> OwnedSemaphorePermit {
+        crate::engine_runtime::EngineRuntime::new(Arc::new(FakeEngine))
+            .acquire_execution_permit()
+            .await
+    }
+
     #[tokio::test]
     async fn native_streaming_worker_timeout_does_not_wait_for_blocking_session() {
         let (release_tx, release_rx) = std_mpsc::channel();
         let worker = NativeStreamingWorker::start(Box::new(BlockingNativeSession {
+            accept_started_tx: None,
             release_rx: Some(release_rx),
+            finish_release_rx: None,
         }))
         .expect("native streaming worker starts");
-        let scheduler = Scheduler::new(1, 1, 1, 1);
-        let scheduler_permit = scheduler.acquire_realtime_inference().await;
-        let runtime = crate::engine_runtime::EngineRuntime::new(std::sync::Arc::new(FakeEngine));
-        let execution_permit = runtime.acquire_execution_permit().await;
         let started_at = Instant::now();
 
         let result = worker
             .accept_pcm_chunk(
                 vec![0, 0],
-                scheduler_permit,
-                execution_permit,
+                realtime_scheduler_permit().await,
+                model_execution_permit().await,
                 crate::metrics::Metrics::default(),
                 "realtime_partial",
                 Duration::from_millis(10),
@@ -1250,5 +1270,120 @@ mod tests {
         );
 
         let _ = release_tx.send(());
+    }
+
+    #[tokio::test]
+    async fn native_streaming_worker_reports_queue_full_without_unbounded_commands() {
+        let (release_tx, release_rx) = std_mpsc::channel();
+        let (started_tx, started_rx) = oneshot::channel();
+        let worker = NativeStreamingWorker::start(Box::new(BlockingNativeSession {
+            accept_started_tx: Some(started_tx),
+            release_rx: Some(release_rx),
+            finish_release_rx: None,
+        }))
+        .expect("native streaming worker starts");
+
+        let first_worker = worker.clone();
+        let first = tokio::spawn(async move {
+            first_worker
+                .accept_pcm_chunk(
+                    vec![0, 0],
+                    realtime_scheduler_permit().await,
+                    model_execution_permit().await,
+                    crate::metrics::Metrics::default(),
+                    "realtime_partial",
+                    Duration::from_secs(5),
+                )
+                .await
+        });
+        started_rx.await.expect("first command starts");
+
+        let second_worker = worker.clone();
+        let second = tokio::spawn(async move {
+            second_worker
+                .accept_pcm_chunk(
+                    vec![0, 0],
+                    realtime_scheduler_permit().await,
+                    model_execution_permit().await,
+                    crate::metrics::Metrics::default(),
+                    "realtime_partial",
+                    Duration::from_secs(5),
+                )
+                .await
+        });
+        tokio::time::sleep(Duration::from_millis(20)).await;
+
+        let result = worker
+            .accept_pcm_chunk(
+                vec![0, 0],
+                realtime_scheduler_permit().await,
+                model_execution_permit().await,
+                crate::metrics::Metrics::default(),
+                "realtime_partial",
+                Duration::from_secs(5),
+            )
+            .await;
+
+        assert!(matches!(result, Err(NativeStreamingCallError::QueueFull)));
+
+        let _ = release_tx.send(());
+        assert!(first.await.unwrap().is_ok());
+        assert!(second.await.unwrap().is_ok());
+    }
+
+    #[tokio::test]
+    async fn native_streaming_worker_finish_timeout_is_bounded() {
+        let (release_tx, release_rx) = std_mpsc::channel();
+        let worker = NativeStreamingWorker::start(Box::new(BlockingNativeSession {
+            accept_started_tx: None,
+            release_rx: None,
+            finish_release_rx: Some(release_rx),
+        }))
+        .expect("native streaming worker starts");
+        let started_at = Instant::now();
+
+        let result = worker
+            .finish(
+                realtime_scheduler_permit().await,
+                model_execution_permit().await,
+                crate::metrics::Metrics::default(),
+                "realtime_final",
+                Duration::from_millis(10),
+            )
+            .await;
+
+        assert!(matches!(
+            result,
+            Err(NativeStreamingCallError::Timeout { .. })
+        ));
+        assert!(
+            started_at.elapsed() < Duration::from_millis(100),
+            "finish timeout should not wait for the blocking native session"
+        );
+
+        let _ = release_tx.send(());
+    }
+
+    #[tokio::test]
+    async fn native_streaming_worker_reports_stopped_worker() {
+        let (sender, receiver) = std_mpsc::sync_channel(NATIVE_STREAMING_COMMAND_CAPACITY);
+        drop(receiver);
+        let worker = NativeStreamingWorker { sender };
+
+        let result = worker
+            .accept_pcm_chunk(
+                vec![0, 0],
+                realtime_scheduler_permit().await,
+                model_execution_permit().await,
+                crate::metrics::Metrics::default(),
+                "realtime_partial",
+                Duration::from_secs(1),
+            )
+            .await;
+
+        assert!(matches!(
+            result,
+            Err(NativeStreamingCallError::WorkerStopped)
+        ));
     }
 }
