@@ -91,7 +91,7 @@ pub fn prepare_short_audio_bytes_with_limits(
 }
 
 fn validate_raw_pcm(bytes: &[u8], limits: ShortAudioLimits) -> Result<(), AudioError> {
-    if bytes.len() % PCM_BYTES_PER_SAMPLE != 0 {
+    if !bytes.len().is_multiple_of(PCM_BYTES_PER_SAMPLE) {
         return Err(AudioError::InvalidPcm(
             "pcm payload must be aligned to 16-bit samples".to_string(),
         ));

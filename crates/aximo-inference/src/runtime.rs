@@ -225,7 +225,7 @@ fn materialize_as_wav(request: &ShortAudioRequest) -> Result<NamedTempFile, Infe
 }
 
 fn write_pcm_as_wav(path: &Path, bytes: &[u8]) -> Result<(), InferenceError> {
-    if bytes.len() % 2 != 0 {
+    if !bytes.len().is_multiple_of(2) {
         return Err(InferenceError::InvalidAudio(
             "pcm payload must be aligned to 16-bit samples".to_string(),
         ));

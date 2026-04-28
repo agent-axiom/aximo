@@ -362,7 +362,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
             }
             Message::Binary(chunk) => {
                 if let Some(session) = active_session.as_mut() {
-                    if chunk.len() % PCM_BYTES_PER_SAMPLE != 0 {
+                    if !chunk.len().is_multiple_of(PCM_BYTES_PER_SAMPLE) {
                         queue_or_break!(ServerEvent::error(
                             "invalid_audio_chunk",
                             "pcm_s16le realtime chunks must be aligned to 16-bit samples",

@@ -201,9 +201,10 @@ impl Default for LimitSettings {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum RuntimeDegradedPolicy {
+    #[default]
     ReadinessOnly,
     FailFastInference,
 }
@@ -211,12 +212,6 @@ pub enum RuntimeDegradedPolicy {
 impl RuntimeDegradedPolicy {
     pub const fn fail_fast_inference(self) -> bool {
         matches!(self, Self::FailFastInference)
-    }
-}
-
-impl Default for RuntimeDegradedPolicy {
-    fn default() -> Self {
-        Self::ReadinessOnly
     }
 }
 
