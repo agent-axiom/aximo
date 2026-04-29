@@ -184,6 +184,10 @@ struct NativeStreamingSession {
 
 struct NativeStartFailingEngine;
 
+struct NativeFinishFailingEngine;
+
+struct NativeFinishFailingSession;
+
 struct NativePartialRecoveringEngine {
     accept_calls: Arc<AtomicUsize>,
 }
@@ -326,6 +330,56 @@ impl aximo_inference::engine::SpeechEngine for NativeStartFailingEngine {
         Err(aximo_inference::engine::InferenceError::Unavailable(
             "native stream unavailable".to_string(),
         ))
+    }
+}
+
+impl aximo_inference::engine::StreamingSpeechSession for NativeFinishFailingSession {
+    fn accept_pcm_chunk(
+        &mut self,
+        _chunk: &[u8],
+    ) -> Result<Option<aximo_core::ShortAudioResult>, aximo_inference::engine::InferenceError> {
+        Ok(None)
+    }
+
+    fn finish(
+        &mut self,
+    ) -> Result<aximo_core::ShortAudioResult, aximo_inference::engine::InferenceError> {
+        Err(aximo_inference::engine::InferenceError::Runtime(
+            "native finish failed".to_string(),
+        ))
+    }
+}
+
+impl aximo_inference::engine::SpeechEngine for NativeFinishFailingEngine {
+    fn transcribe_short(
+        &self,
+        _request: aximo_core::ShortAudioRequest,
+    ) -> Result<aximo_core::ShortAudioResult, aximo_inference::engine::InferenceError> {
+        Ok(aximo_core::ShortAudioResult::new(
+            "offline fallback",
+            "native-finish-failing",
+        ))
+    }
+
+    fn capabilities(&self) -> aximo_core::EngineCapabilities {
+        aximo_core::EngineCapabilities {
+            engine: "native-finish-failing".to_string(),
+            model_name: "NativeFinishFailingTest".to_string(),
+            sample_rate_hz: 16_000,
+            languages: vec!["en".to_string()],
+            supports_timestamps: false,
+            supports_language_detection: false,
+            supports_native_streaming: true,
+        }
+    }
+
+    fn start_streaming_session(
+        &self,
+    ) -> Result<
+        Box<dyn aximo_inference::engine::StreamingSpeechSession>,
+        aximo_inference::engine::InferenceError,
+    > {
+        Ok(Box::new(NativeFinishFailingSession))
     }
 }
 
@@ -522,6 +576,104 @@ async fn websocket_native_start_failure_degrades_stream_component() {
     let second_error = next_event(&mut second_socket).await;
     assert_eq!(second_error["event"], "error");
     assert_eq!(second_error["code"], "engine_degraded");
+
+    server.abort();
+}
+
+#[tokio::test]
+async fn websocket_native_session_rejects_audio_after_byte_limit() {
+    let mut settings = aximo::config::Settings::default();
+    settings.limits.max_realtime_session_bytes = 3_200;
+    let (engine, short_calls, stream_chunks) = NativeStreamingEngine::new();
+    let app = aximo::app::build_app(
+        settings,
+        Arc::new(aximo_inference::engine::FakeEngine),
+        Arc::new(engine),
+    );
+    let (url, server) = spawn_server_with_app(app).await;
+    let (mut socket, _) = connect_async(url).await.unwrap();
+
+    socket
+        .send(Message::Text(r#"{"event":"start"}"#.into()))
+        .await
+        .unwrap();
+    assert_eq!(next_event(&mut socket).await["event"], "session_started");
+
+    socket
+        .send(Message::Binary(vec![0_u8; 6_400].into()))
+        .await
+        .unwrap();
+    let oversized = next_event(&mut socket).await;
+
+    assert_eq!(oversized["event"], "error");
+    assert_eq!(oversized["code"], "realtime_session_too_large");
+    assert_eq!(short_calls.load(Ordering::SeqCst), 0);
+    assert!(stream_chunks.lock().unwrap().is_empty());
+
+    server.abort();
+}
+
+#[tokio::test]
+async fn websocket_native_session_rejects_audio_after_duration_limit() {
+    let mut settings = aximo::config::Settings::default();
+    settings.limits.max_realtime_session_duration_ms = 1;
+    let (engine, short_calls, stream_chunks) = NativeStreamingEngine::new();
+    let app = aximo::app::build_app(
+        settings,
+        Arc::new(aximo_inference::engine::FakeEngine),
+        Arc::new(engine),
+    );
+    let (url, server) = spawn_server_with_app(app).await;
+    let (mut socket, _) = connect_async(url).await.unwrap();
+
+    socket
+        .send(Message::Text(r#"{"event":"start"}"#.into()))
+        .await
+        .unwrap();
+    assert_eq!(next_event(&mut socket).await["event"], "session_started");
+    sleep(Duration::from_millis(5)).await;
+
+    socket
+        .send(Message::Binary(vec![0_u8; 3_200].into()))
+        .await
+        .unwrap();
+    let too_long = next_event(&mut socket).await;
+
+    assert_eq!(too_long["event"], "error");
+    assert_eq!(too_long["code"], "realtime_session_too_long");
+    assert_eq!(short_calls.load(Ordering::SeqCst), 0);
+    assert!(stream_chunks.lock().unwrap().is_empty());
+
+    server.abort();
+}
+
+#[tokio::test]
+async fn websocket_native_finish_error_is_reported_as_structured_inference_error() {
+    let app = aximo::app::build_app(
+        aximo::config::Settings::default(),
+        Arc::new(aximo_inference::engine::FakeEngine),
+        Arc::new(NativeFinishFailingEngine),
+    );
+    let (url, server) = spawn_server_with_app(app).await;
+    let (mut socket, _) = connect_async(url).await.unwrap();
+
+    socket
+        .send(Message::Text(r#"{"event":"start"}"#.into()))
+        .await
+        .unwrap();
+    socket
+        .send(Message::Text(r#"{"event":"stop"}"#.into()))
+        .await
+        .unwrap();
+
+    assert_eq!(next_event(&mut socket).await["event"], "session_started");
+    let error = next_event(&mut socket).await;
+    assert_eq!(error["event"], "error");
+    assert_eq!(error["code"], "inference_failed");
+    assert_eq!(
+        error["reason"],
+        "runtime inference error: native finish failed"
+    );
 
     server.abort();
 }

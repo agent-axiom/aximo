@@ -211,6 +211,8 @@ mod tests {
     };
 
     use aximo_inference::engine::{FakeEngine, SpeechEngine};
+    use axum::routing::get;
+    use tokio::io::AsyncWriteExt;
 
     use super::*;
 
@@ -243,5 +245,85 @@ mod tests {
 
         assert!(!Arc::ptr_eq(&offline, &realtime));
         assert_eq!(build_count.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn default_engine_loader_propagates_offline_build_error() {
+        let settings = Settings::default();
+        let build_count = AtomicUsize::new(0);
+
+        let error = match load_default_engines_with_factory(&settings, |_spec| {
+            build_count.fetch_add(1, Ordering::SeqCst);
+            Err(anyhow::anyhow!("offline build failed"))
+        }) {
+            Ok(_) => panic!("expected offline engine build failure"),
+            Err(error) => error,
+        };
+
+        assert_eq!(build_count.load(Ordering::SeqCst), 1);
+        assert!(error.to_string().contains("offline build failed"));
+    }
+
+    #[test]
+    fn default_engine_loader_propagates_realtime_build_error() {
+        let mut settings = Settings::default();
+        settings.inference.default_realtime_engine = "gigaam".to_string();
+        let build_count = AtomicUsize::new(0);
+
+        let error = match load_default_engines_with_factory(&settings, |_spec| {
+            let call_index = build_count.fetch_add(1, Ordering::SeqCst);
+            if call_index == 0 {
+                Ok(Arc::new(FakeEngine) as Arc<dyn SpeechEngine>)
+            } else {
+                Err(anyhow::anyhow!("realtime build failed"))
+            }
+        }) {
+            Ok(_) => panic!("expected realtime engine build failure"),
+            Err(error) => error,
+        };
+
+        assert_eq!(build_count.load(Ordering::SeqCst), 2);
+        assert!(error.to_string().contains("realtime build failed"));
+    }
+
+    #[tokio::test]
+    async fn serve_with_shutdown_errors_when_grace_deadline_is_exceeded() {
+        let app = Router::new().route(
+            "/hang",
+            get(|| async {
+                tokio::time::sleep(Duration::from_secs(60)).await;
+                "never"
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
+        let server = tokio::spawn(serve_with_shutdown(
+            listener,
+            app,
+            async move {
+                let _ = shutdown_rx.await;
+            },
+            Duration::from_millis(5),
+        ));
+
+        let mut stream = tokio::net::TcpStream::connect(address).await.unwrap();
+        stream
+            .write_all(
+                format!("GET /hang HTTP/1.1\r\nHost: {address}\r\nConnection: close\r\n\r\n")
+                    .as_bytes(),
+            )
+            .await
+            .unwrap();
+        tokio::time::sleep(Duration::from_millis(20)).await;
+
+        shutdown_tx.send(()).unwrap();
+        let error = tokio::time::timeout(Duration::from_secs(2), server)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap_err();
+
+        assert!(error.to_string().contains("graceful shutdown exceeded"));
     }
 }

@@ -273,7 +273,7 @@ fn map_audio_media_error(error: AudioError) -> InferenceError {
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
+    use std::{sync::Arc, time::Duration};
 
     use super::*;
 
@@ -331,6 +331,39 @@ mod tests {
         }
     }
 
+    struct FakeTranscribeSpeechModel {
+        result: Option<transcribe_rs::TranscriptionResult>,
+        error: Option<String>,
+        seen_language: Arc<Mutex<Option<String>>>,
+    }
+
+    impl TranscribeSpeechModel for FakeTranscribeSpeechModel {
+        fn capabilities(&self) -> transcribe_rs::ModelCapabilities {
+            transcribe_rs::ModelCapabilities {
+                name: "FakeTranscribeSpeechModel",
+                engine_id: "fake-transcribe",
+                sample_rate: 16_000,
+                languages: &["en", "ru"],
+                supports_timestamps: true,
+                supports_translation: false,
+                supports_streaming: false,
+            }
+        }
+
+        fn transcribe_raw(
+            &mut self,
+            _samples: &[f32],
+            options: &TranscribeOptions,
+        ) -> Result<transcribe_rs::TranscriptionResult, transcribe_rs::TranscribeError> {
+            *self.seen_language.lock().unwrap() = options.language.clone();
+            if let Some(error) = &self.error {
+                return Err(transcribe_rs::TranscribeError::Inference(error.clone()));
+            }
+
+            Ok(self.result.clone().expect("fake transcription result"))
+        }
+    }
+
     fn fake_capabilities() -> EngineCapabilities {
         EngineCapabilities {
             engine: "fake".to_string(),
@@ -351,7 +384,26 @@ mod tests {
         );
         assert_eq!(EngineKind::from_str("gigaam").unwrap(), EngineKind::Gigaam);
         assert_eq!(EngineKind::Parakeet.as_str(), "parakeet");
+        assert_eq!(EngineKind::Gigaam.as_str(), "gigaam");
         assert!(EngineKind::from_str("unknown").is_err());
+    }
+
+    #[test]
+    fn runtime_engine_factory_rejects_missing_model_path_before_loading_model() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("missing-model");
+        let spec = EngineSpec {
+            kind: EngineKind::Parakeet,
+            model_path: missing.clone(),
+        };
+
+        let error = match RuntimeEngineFactory.build(&spec) {
+            Ok(_) => panic!("expected missing model path to fail before model loading"),
+            Err(error) => error,
+        };
+
+        assert!(matches!(error, InferenceError::Unavailable(_)));
+        assert!(error.to_string().contains(&missing.display().to_string()));
     }
 
     #[test]
@@ -497,5 +549,82 @@ mod tests {
         let result = engine.transcribe_short(request).unwrap();
 
         assert!(result.segments.is_empty());
+    }
+
+    #[test]
+    fn transcribe_rs_model_runner_maps_language_hint_and_backend_segments() {
+        let seen_language = Arc::new(Mutex::new(None));
+        let mut runner = TranscribeRsModelRunner {
+            model: Box::new(FakeTranscribeSpeechModel {
+                result: Some(transcribe_rs::TranscriptionResult {
+                    text: "hello".to_string(),
+                    segments: Some(vec![
+                        transcribe_rs::TranscriptionSegment {
+                            start: 0.123,
+                            end: 1.501,
+                            text: "hello".to_string(),
+                        },
+                        transcribe_rs::TranscriptionSegment {
+                            start: -0.5,
+                            end: f32::NAN,
+                            text: "clamped".to_string(),
+                        },
+                    ]),
+                }),
+                error: None,
+                seen_language: Arc::clone(&seen_language),
+            }),
+        };
+        let wav = NamedTempFile::new().unwrap();
+        write_pcm_as_wav(wav.path(), &[0, 0, 1, 0]).unwrap();
+
+        let result = runner
+            .transcribe_file(wav.path(), Some("ru".to_string()))
+            .unwrap();
+
+        assert_eq!(*seen_language.lock().unwrap(), Some("ru".to_string()));
+        assert_eq!(result.text, "hello");
+        assert_eq!(
+            result.segments,
+            vec![
+                TranscriptSegment {
+                    start_ms: 123,
+                    end_ms: 1501,
+                    text: "hello".to_string(),
+                },
+                TranscriptSegment {
+                    start_ms: 0,
+                    end_ms: 0,
+                    text: "clamped".to_string(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn transcribe_rs_model_runner_maps_backend_errors_to_runtime_errors() {
+        let mut runner = TranscribeRsModelRunner {
+            model: Box::new(FakeTranscribeSpeechModel {
+                result: None,
+                error: Some("backend exploded".to_string()),
+                seen_language: Arc::new(Mutex::new(None)),
+            }),
+        };
+        let wav = NamedTempFile::new().unwrap();
+        write_pcm_as_wav(wav.path(), &[0, 0]).unwrap();
+
+        let error = runner.transcribe_file(wav.path(), None).unwrap_err();
+
+        assert!(matches!(error, InferenceError::Runtime(_)));
+        assert!(error.to_string().contains("backend exploded"));
+    }
+
+    #[test]
+    fn seconds_to_ms_clamps_non_positive_and_non_finite_values() {
+        assert_eq!(seconds_to_ms(-0.001), 0);
+        assert_eq!(seconds_to_ms(0.0), 0);
+        assert_eq!(seconds_to_ms(f32::NAN), 0);
+        assert_eq!(seconds_to_ms(f32::INFINITY), 0);
+        assert_eq!(seconds_to_ms(1.234), 1234);
     }
 }
