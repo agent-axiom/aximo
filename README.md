@@ -1,6 +1,11 @@
 # Aximo
 
+[![CI](https://github.com/agent-axiom/aximo/actions/workflows/ci.yml/badge.svg)](https://github.com/agent-axiom/aximo/actions/workflows/ci.yml)
+[![Security](https://github.com/agent-axiom/aximo/actions/workflows/security.yml/badge.svg)](https://github.com/agent-axiom/aximo/actions/workflows/security.yml)
+[![Image Security](https://github.com/agent-axiom/aximo/actions/workflows/image-security.yml/badge.svg)](https://github.com/agent-axiom/aximo/actions/workflows/image-security.yml)
+[![Container](https://github.com/agent-axiom/aximo/actions/workflows/container.yml/badge.svg)](https://github.com/agent-axiom/aximo/actions/workflows/container.yml)
 [![Coverage](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/agent-axiom/aximo/main/badges/coverage.json)](https://github.com/agent-axiom/aximo/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 `aximo` is a CPU-first STT microservice for Russian and English built as a Rust Cargo workspace. It exposes:
 
