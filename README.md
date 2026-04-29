@@ -32,6 +32,47 @@ The demo runs on a free CPU Hugging Face Space, so cold starts and slower infere
 - `crates/aximo-inference`: `transcribe-rs` adapters for local CPU models
 - `crates/aximo-audio`: audio helpers
 
+## How It Works
+
+```mermaid
+flowchart LR
+    client["Client"]
+    recorder["Swagger microphone recorder"]
+    api["Aximo API<br/>axum HTTP + WebSocket"]
+    short["POST /v1/transcriptions<br/>short audio"]
+    realtime["GET /v1/realtime<br/>WebSocket"]
+    admission["Admission control<br/>body limits, capacity, degraded policy"]
+    audio["Audio preprocessing<br/>MIME parse, decode, normalize, resample"]
+    session["Realtime session manager<br/>bounded PCM buffer, cadence, cleanup"]
+    scheduler["Scheduler semaphores<br/>request/session/inference limits"]
+    gate["Model execution gate<br/>one model instance, one execution slot"]
+    blocking["Blocking inference worker<br/>timeout-bounded client contract"]
+    native["Native streaming worker<br/>only when backend supports it"]
+    engine["Local CPU STT engine<br/>transcribe-rs ONNX adapter"]
+    response["JSON / WebSocket events<br/>text, timings, optional segments"]
+    ops["Operations surface<br/>health, readiness, metrics, capabilities"]
+
+    client --> api
+    recorder --> api
+    api --> short
+    api --> realtime
+
+    short --> admission --> audio --> scheduler --> gate --> blocking --> engine --> response
+    realtime --> admission --> session
+    session --> scheduler
+    scheduler --> gate
+    gate --> blocking
+    gate --> native
+    native --> engine
+    blocking --> engine
+    engine --> response
+
+    api --> ops
+    blocking --> ops
+    native --> ops
+    scheduler --> ops
+```
+
 Architecture and protocol details live in:
 
 - [docs/architecture.md](docs/architecture.md)
