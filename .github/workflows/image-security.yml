@@ -48,6 +48,7 @@ jobs:
           output: trivy-results.sarif
           severity: HIGH,CRITICAL
           ignore-unfixed: true
+          cache: "false"
           exit-code: "1"
 
       - name: Scan image with Grype
