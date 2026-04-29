@@ -1,0 +1,93 @@
+name: Image Security
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  schedule:
+    - cron: "37 4 * * 2"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+
+env:
+  IMAGE_TAG: localbuild/aximo:${{ github.sha }}
+
+jobs:
+  scan:
+    name: Trivy and Grype image scan
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build local image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: Dockerfile
+          load: true
+          tags: ${{ env.IMAGE_TAG }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Scan image with Trivy
+        id: trivy
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@0.35.0
+        with:
+          image-ref: ${{ env.IMAGE_TAG }}
+          format: sarif
+          output: trivy-results.sarif
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+
+      - name: Scan image with Grype
+        id: grype
+        continue-on-error: true
+        uses: anchore/scan-action@v7
+        with:
+          image: ${{ env.IMAGE_TAG }}
+          fail-build: true
+          severity-cutoff: high
+          only-fixed: true
+          output-format: sarif
+          output-file: grype-results.sarif
+
+      - name: Upload Trivy SARIF
+        if: always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: trivy-results.sarif
+          category: trivy-container-image
+
+      - name: Upload Grype SARIF
+        if: always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: grype-results.sarif
+          category: grype-container-image
+
+      - name: Upload scanner reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: image-security-reports
+          path: |
+            trivy-results.sarif
+            grype-results.sarif
+          if-no-files-found: warn
+
+      - name: Fail on actionable high or critical vulnerabilities
+        if: steps.trivy.outcome == 'failure' || steps.grype.outcome == 'failure'
+        run: |
+          echo "Trivy outcome: ${{ steps.trivy.outcome }}"
+          echo "Grype outcome: ${{ steps.grype.outcome }}"
+          exit 1
