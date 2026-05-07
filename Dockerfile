@@ -2,7 +2,7 @@
 
 # ort/onnxruntime prebuilt binaries used by transcribe-rs on aarch64 require
 # newer glibc/libstdc++ symbols than Debian bookworm provides.
-FROM rust:1.94.1-trixie AS builder
+FROM rust:1.95.0-trixie AS builder
 
 WORKDIR /app
 
