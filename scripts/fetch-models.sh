@@ -51,7 +51,7 @@ validate_model() {
   local directory="$1"
   local required
   for required in "${required_files[@]}"; do
-    if [[ ! -s "${directory}/${required}" ]]; then
+    if [[ ! -f "${directory}/${required}" || ! -s "${directory}/${required}" ]]; then
       echo "Missing or empty required model file: ${directory}/${required}" >&2
       return 1
     fi

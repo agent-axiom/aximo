@@ -73,6 +73,19 @@ class FetchModelsTests(unittest.TestCase):
         self.assertNotEqual(self.run_script().returncode, 0)
         self.assertEqual((self.target / "vocab.txt").read_bytes(), b"previous")
 
+    def test_directory_instead_of_model_file_preserves_previous_model(self):
+        self.target.mkdir(parents=True)
+        for name in FILES:
+            (self.target / name).write_bytes(b"previous")
+        self.archive(missing="encoder-model.int8.onnx")
+        bundle = self.root / "bundle" / "parakeet-tdt-0.6b-v3-int8"
+        (bundle / "encoder-model.int8.onnx").mkdir()
+        with tarfile.open(self.env["TEST_ARCHIVE"], "w:gz") as tar:
+            tar.add(bundle, arcname=bundle.name)
+        self.env["AXIMO_FORCE"] = "1"
+        self.assertNotEqual(self.run_script().returncode, 0)
+        self.assertEqual((self.target / "vocab.txt").read_bytes(), b"previous")
+
     def test_forced_valid_download_replaces_previous_model(self):
         self.target.mkdir(parents=True)
         (self.target / "vocab.txt").write_bytes(b"previous")

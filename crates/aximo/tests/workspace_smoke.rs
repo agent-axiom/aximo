@@ -46,13 +46,16 @@ fn workspace_docs_keep_transcription_query_examples_valid() {
         .nth(2)
         .expect("workspace root");
     let readme = std::fs::read_to_string(root.join("README.md")).unwrap();
+    let api = std::fs::read_to_string(root.join("docs/api-reference.md")).unwrap();
     let architecture = std::fs::read_to_string(root.join("docs/architecture.md")).unwrap();
     let benchmark = std::fs::read_to_string(root.join("scripts/benchmark-api.sh")).unwrap();
     let typo = ["×", "tamps"].concat();
 
-    assert!(readme.contains("language=ru&timestamps=true"));
+    assert!(readme.contains("docs/api-reference.md"));
+    assert!(api.contains("language=ru&timestamps=true"));
     assert!(benchmark.contains(r#"engine=${engine}&timestamps=${TIMESTAMPS}"#));
     assert!(!readme.contains(&typo));
+    assert!(!api.contains(&typo));
     assert!(!architecture.contains(&typo));
     assert!(!benchmark.contains(&typo));
 }
@@ -143,15 +146,20 @@ fn workspace_documents_backend_capability_closure() {
         .nth(2)
         .expect("workspace root");
     let readme = std::fs::read_to_string(root.join("README.md")).unwrap();
+    let api = std::fs::read_to_string(root.join("docs/api-reference.md")).unwrap();
     let architecture = std::fs::read_to_string(root.join("docs/architecture.md")).unwrap();
     let realtime_protocol =
         std::fs::read_to_string(root.join("docs/realtime-protocol.md")).unwrap();
 
-    assert!(readme.contains("backend extension point for native streaming sessions"));
-    assert!(readme.contains("bounded native streaming worker"));
-    assert!(readme.contains("one native worker thread per active native streaming session"));
-    assert!(readme.contains("bounded windowed-sinc"));
-    assert!(readme.contains("supports_language_detection=false"));
+    let operations = std::fs::read_to_string(root.join("docs/operations.md")).unwrap();
+
+    assert!(readme.contains("docs/api-reference.md"));
+    assert!(readme.contains("docs/operations.md"));
+    assert!(api.contains("backend extension point for native streaming sessions"));
+    assert!(api.contains("bounded native streaming worker"));
+    assert!(operations.contains("one native worker thread per active native streaming session"));
+    assert!(operations.contains("bounded windowed-sinc"));
+    assert!(operations.contains("supports_language_detection=false"));
     assert!(architecture.contains("start_streaming_session()"));
     assert!(architecture.contains("Native Streaming Worker"));
     assert!(architecture.contains("realtime_stream:<engine>"));
