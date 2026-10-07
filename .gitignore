@@ -2,3 +2,5 @@
 target
 .DS_Store
 var
+
+__pycache__/

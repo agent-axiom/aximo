@@ -40,7 +40,29 @@ PARAKEET_URL="${AXIMO_PARAKEET_URL:-https://blob.handy.computer/parakeet-v3-int8
 TARGET_DIR="${MODELS_DIR}/parakeet-tdt-0.6b-v3-int8"
 FORCE_DOWNLOAD="${AXIMO_FORCE:-0}"
 
+required_files=(
+  encoder-model.int8.onnx
+  decoder_joint-model.int8.onnx
+  nemo128.onnx
+  vocab.txt
+)
+
+validate_model() {
+  local directory="$1"
+  local required
+  for required in "${required_files[@]}"; do
+    if [[ ! -s "${directory}/${required}" ]]; then
+      echo "Missing or empty required model file: ${directory}/${required}" >&2
+      return 1
+    fi
+  done
+}
+
 if [[ -d "${TARGET_DIR}" && "${FORCE_DOWNLOAD}" != "1" ]]; then
+  if ! validate_model "${TARGET_DIR}"; then
+    echo "Run AXIMO_FORCE=1 $0 to replace the incomplete model." >&2
+    exit 1
+  fi
   echo "Parakeet model already present at ${TARGET_DIR}"
   exit 0
 fi
@@ -58,7 +80,7 @@ trap cleanup EXIT
 mkdir -p "${MODELS_DIR}" "${extract_dir}"
 
 echo "Downloading Parakeet model from ${PARAKEET_URL}"
-curl -fL "${PARAKEET_URL}" -o "${archive_path}"
+curl --retry 3 --connect-timeout 15 -fL "${PARAKEET_URL}" -o "${archive_path}"
 
 echo "Extracting model archive"
 tar -xzf "${archive_path}" -C "${extract_dir}"
@@ -80,20 +102,10 @@ if [[ -z "${source_dir}" ]]; then
   exit 1
 fi
 
+# Validate the download before touching a previously installed model.
+validate_model "${source_dir}"
 rm -rf "${TARGET_DIR}"
 mkdir -p "${TARGET_DIR}"
 cp -R "${source_dir}/." "${TARGET_DIR}/"
-
-for required in \
-  encoder-model.int8.onnx \
-  decoder_joint-model.int8.onnx \
-  nemo128.onnx \
-  vocab.txt
-do
-  if [[ ! -f "${TARGET_DIR}/${required}" ]]; then
-    echo "Missing required model file: ${TARGET_DIR}/${required}" >&2
-    exit 1
-  fi
-done
 
 echo "Model ready at ${TARGET_DIR}"
