@@ -166,4 +166,3 @@ The `/docs/` page also includes an `Aximo Recorder` panel that can capture micro
 For browser microphone access, use `localhost`, `127.0.0.1`, or HTTPS.
 
 ![Aximo Swagger recorder](assets/swagger-recorder.png)
-
