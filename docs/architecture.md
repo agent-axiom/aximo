@@ -124,3 +124,51 @@ sequenceDiagram
 `GET /health/live` is process liveness. `GET /health/ready` reflects runtime health and returns `503` after consecutive timeout/runtime/unavailable inference failures cross the configured degradation threshold for any component. Health is tracked per component key, for example `short:parakeet`, `realtime_stream:<engine>`, `realtime_partial:parakeet`, and `realtime_final:parakeet`; successful inference clears only the component that succeeded.
 
 `runtime_degraded_policy` controls whether degraded state is only an orchestrator signal or also a request admission policy. `readiness_only` preserves Kubernetes-style behavior where readiness removes the pod from service endpoints but direct callers can still retry. `fail_fast_inference` rejects new short-audio requests or realtime session starts for degraded engine paths with `engine_degraded`, then allows one half-open recovery probe after `runtime_degraded_recovery_cooldown_ms`. If a half-open probe fails with a client-side error before reaching inference, Aximo consumes that probe window and restarts the cooldown while preserving the previous engine failure reason.
+
+## End-to-end overview
+
+```mermaid
+flowchart LR
+    client["Client"]
+    recorder["Swagger microphone recorder"]
+    api["Aximo API<br/>axum HTTP + WebSocket"]
+    short["POST /v1/transcriptions<br/>short audio"]
+    realtime["GET /v1/realtime<br/>WebSocket"]
+    admission["Admission control<br/>body limits, capacity, degraded policy"]
+    audio["Audio preprocessing<br/>MIME parse, decode, normalize, resample"]
+    session["Realtime session manager<br/>bounded PCM buffer, cadence, cleanup"]
+    scheduler["Scheduler semaphores<br/>request/session/inference limits"]
+    gate["Model execution gate<br/>one model instance, one execution slot"]
+    blocking["Blocking inference worker<br/>timeout-bounded client contract"]
+    native["Native streaming worker<br/>only when backend supports it"]
+    engine["Local CPU STT engine<br/>transcribe-rs ONNX adapter"]
+    response["JSON / WebSocket events<br/>text, timings, optional segments"]
+    ops["Operations surface<br/>health, readiness, metrics, capabilities"]
+
+    client --> api
+    recorder --> api
+    api --> short
+    api --> realtime
+
+    short --> admission --> audio --> scheduler --> gate --> blocking --> engine --> response
+    realtime --> admission --> session
+    session --> scheduler
+    scheduler --> gate
+    gate --> blocking
+    gate --> native
+    native --> engine
+    blocking --> engine
+    engine --> response
+
+    api --> ops
+    blocking --> ops
+    native --> ops
+    scheduler --> ops
+```
+
+## Workspace
+
+- `crates/aximo`: HTTP and WebSocket service binary
+- `crates/aximo-core`: scheduler and shared STT domain types
+- `crates/aximo-inference`: `transcribe-rs` adapters for local CPU models
+- `crates/aximo-audio`: audio helpers

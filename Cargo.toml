@@ -19,7 +19,7 @@ version = "0.1.0"
 aximo-audio = { path = "crates/aximo-audio", version = "0.1.0" }
 aximo-core = { path = "crates/aximo-core", version = "0.1.0" }
 aximo-inference = { path = "crates/aximo-inference", version = "0.1.0" }
-anyhow = "1.0.102"
+anyhow = "1.0.103"
 axum = { version = "0.8.9", features = ["ws"] }
 bytes = "1.11.1"
 futures-util = "0.3.32"

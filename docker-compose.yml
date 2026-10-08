@@ -8,7 +8,7 @@ services:
       AXIMO_CONFIG: /app/config/aximo.toml
       ORT_LOG: error
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     volumes:
       - ./config/aximo.example.toml:/app/config/aximo.toml:ro
       - ./var/models:/var/lib/aximo/models:ro
